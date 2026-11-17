@@ -1,0 +1,412 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>REA Studio</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="titlebar" id="titlebar">
+  <div class="titlebar-left">
+    <div class="applogo"><span class="icon">&#xE9D9;</span></div>
+    <div class="apptitle">REA Studio</div>
+    <div class="crumb" id="crumb">未选择目标</div>
+  </div>
+  <div class="titlebar-right">
+    <button class="captionbtn" id="btnMin" title="最小化"><span class="icon">&#xE921;</span></button>
+    <button class="captionbtn" id="btnMax" title="最大化"><span class="icon">&#xE922;</span></button>
+    <button class="captionbtn close" id="btnClose" title="关闭"><span class="icon">&#xE8BB;</span></button>
+  </div>
+</div>
+
+<div class="shell">
+  <nav class="nav" id="nav">
+    <button class="navitem active" data-page="target"><span class="icon">&#xE8A5;</span><span class="navlabel">目标</span></button>
+    <button class="navitem" data-page="analysis"><span class="icon">&#xE9D9;</span><span class="navlabel">静态分析</span></button>
+    <button class="navitem" data-page="evidence"><span class="icon">&#xE71D;</span><span class="navlabel">证据</span></button>
+    <button class="navitem" data-page="network"><span class="icon">&#xE774;</span><span class="navlabel">网络分析</span></button>
+    <button class="navitem" data-page="dynamic"><span class="icon">&#xE9D2;</span><span class="navlabel">动态分析</span></button>
+    <button class="navitem" data-page="ai"><span class="icon">&#xE8BD;</span><span class="navlabel">AI 解读</span></button>
+    <div class="navspacer"></div>
+    <button class="navitem" data-page="settings"><span class="icon">&#xE713;</span><span class="navlabel">设置</span></button>
+    <div class="runtime" id="runtimePill" title="运行时状态">
+      <span class="dot" id="runtimeDot"></span><span class="navlabel" id="runtimeText">运行时检测中</span>
+    </div>
+  </nav>
+
+  <main class="content">
+    <!-- 目标页 -->
+    <section class="page active" id="page-target">
+      <header class="pagehead">
+        <div>
+          <h1>逆向目标</h1>
+          <p>选择本机可执行文件、程序集或制品，全部解析在本机离线完成，样本不会被上传。</p>
+        </div>
+      </header>
+
+      <div class="dropzone" id="dropzone">
+        <div class="dz-icon icon">&#xE8B7;</div>
+        <div class="dz-title">拖入文件，或选择本机文件</div>
+        <div class="dz-sub">支持 PE / .NET / 快捷方式 / APK / WASM / SQLite / GGUF 等</div>
+        <button class="btn accent" id="btnPick"><span class="icon">&#xE8A5;</span>选择文件</button>
+      </div>
+
+      <div class="card targetcard hidden" id="targetCard">
+        <div class="trow">
+          <div class="ticon icon">&#xE7C3;</div>
+          <div class="tmeta">
+            <div class="tname" id="tName">—</div>
+            <div class="tpath mono" id="tPath">—</div>
+            <div class="tbadges" id="tBadges"></div>
+          </div>
+          <div class="tactions">
+            <button class="btn" id="btnRepick"><span class="icon">&#xE8A5;</span>更换目标</button>
+            <button class="btn" id="btnReveal"><span class="icon">&#xE8B7;</span>定位</button>
+            <button class="btn accent" id="btnGotoAnalysis"><span class="icon">&#xE768;</span>开始分析</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card sitecard">
+        <div class="cardhead"><span class="icon">&#xE774;</span>网站分析（可独立进行静态与动态分析）</div>
+        <div class="sitebar">
+          <input id="siteUrl" class="mono" placeholder="https://example.com" spellcheck="false" />
+          <button class="btn" id="btnWebRecon"><span class="icon">&#xE768;</span>逆向该站点</button>
+        </div>
+        <div class="sitebar">
+          <button class="btn accent" id="btnSiteStatic"><span class="icon">&#xE9D9;</span>站点静态分析</button>
+          <select class="input" id="siteDynSec" style="width:112px">
+            <option value="8">观测 8 秒</option>
+            <option value="15" selected>观测 15 秒</option>
+            <option value="30">观测 30 秒</option>
+            <option value="60">观测 60 秒</option>
+          </select>
+          <button class="btn accent" id="btnSiteDynamic"><span class="icon">&#xE768;</span>站点动态分析</button>
+          <button class="btn" id="btnSiteDynStop" disabled><span class="icon">&#xE71A;</span>停止</button>
+        </div>
+        <div class="hint">静态分析：抓取 HTML 与同源脚本，还原页面结构、接口端点、敏感凭据、安全响应头与技术指纹，不执行脚本。<br />动态分析：在内置浏览器内核中真实加载页面，记录网络请求、运行时接口调用、存储与 Cookie、控制台异常。两类结果都会写入证据页，AI 解读可直接读取。</div>
+      </div>
+
+      <div class="card sandboxcard">
+        <div class="cardhead"><span class="icon">&#xE72E;</span>沙箱作业面
+          <span class="sbstate" id="sbState">未建立</span>
+          <span class="spacer"></span>
+          <button class="btn small" id="btnSbOpen"><span class="icon">&#xE838;</span>打开目录</button>
+          <button class="btn small danger" id="btnSbPurge"><span class="icon">&#xE74D;</span>清空沙箱</button>
+        </div>
+        <div class="kv" id="sbKv"></div>
+        <div class="hint">文件与链接的作业面全在沙箱内：样本只复制副本入箱，原文件不被修改；站点分析使用会话级独立内核数据目录，Cookie／缓存／存储随会话焚毁；下载强制落到沙箱，file:// 越界请求与非 http(s) 协议一律 403。切换作业域会新建会话，仅保留最近 3 个。</div>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <div class="cardhead"><span class="icon">&#xE946;</span>本机运行时</div>
+          <div class="kv" id="envKv"></div>
+        </div>
+        <div class="card">
+          <div class="cardhead"><span class="icon">&#xE7F4;</span>分析能力</div>
+          <div class="capgrid" id="capGrid"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 分析页 -->
+    <section class="page" id="page-analysis">
+      <header class="pagehead">
+        <div>
+          <h1>静态分析</h1>
+          <p id="anaSub">选择目标后可在本机执行离线分析模块。</p>
+        </div>
+        <div class="headactions">
+          <button class="btn" id="btnModules"><span class="icon">&#xE71D;</span>模块 <span id="modCount">0</span></button>
+          <button class="btn accent" id="btnRun"><span class="icon">&#xE768;</span>开始全面分析</button>
+          <button class="btn" id="btnTypes"><span class="icon">&#xE8A5;</span>识别类型</button>
+          <button class="btn" id="btnNetQuick"><span class="icon">&#xE774;</span>网络分析</button>
+          <button class="btn" id="btnReport"><span class="icon">&#xE74E;</span>导出报告</button>
+          <button class="btn" id="btnPdf"><span class="icon">&#xE74E;</span>导出 PDF</button>
+      <button class="btn" id="btnExplain"><span class="icon">&#xE8BD;</span>AI 解读</button>
+      <button class="btn danger hidden" id="btnCancel"><span class="icon">&#xE71A;</span>中止</button>
+        </div>
+      </header>
+
+      <div class="typebar" id="typeBar"><span class="junk">尚未识别目标类型</span></div>
+
+      <div class="progressbar hidden" id="progressWrap"><div class="progressfill" id="progressFill"></div></div>
+
+      <div class="modulepanel hidden" id="modulePanel">
+        <div class="mp-head"><span>选择要执行的模块</span><span class="mp-hint">默认已选常用模块</span></div>
+        <div class="mp-list" id="mpList"></div>
+      </div>
+
+      <div class="card viruscard hidden" id="virusCard">
+        <div class="cardhead"><span class="icon">&#xEA18;</span>病毒检测（沙箱内比对）
+          <span class="vbadge" id="virusVerdict">检测中</span>
+          <span class="mp-hint" style="margin-left:auto">样本副本在沙箱内比对，样本不执行</span>
+        </div>
+        <div class="kv" id="virusKv"></div>
+        <div class="virushits" id="virusHits"></div>
+      </div>
+
+      <div class="card viruscard hidden" id="vulnCard">
+        <div class="cardhead"><span class="icon">&#xE9D9;</span>漏洞检测（CVE 库比对）
+          <span class="vbadge" id="vulnVerdict">检测中</span>
+          <span class="mp-hint" style="margin-left:auto">识别组件版本后与 CVE 库比对，样本不执行</span>
+        </div>
+        <div class="kv" id="vulnKv"></div>
+        <div class="virushits" id="vulnHits"></div>
+      </div>
+
+      <div class="results" id="results">
+        <div class="empty" id="anaEmpty">
+          <div class="icon">&#xE9D9;</div>
+          <div>尚未执行分析</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 网络分析页 -->
+    <section class="page" id="page-network">
+      <header class="pagehead">
+        <div><h1>网络分析</h1><p>还原流量指向、外发通道、数据包内容与隐私字段，筛出危险发包并并入导出报告。</p></div>
+        <div class="headactions">
+          <button class="btn accent" id="btnNet"><span class="icon">&#xE768;</span>分析当前样本</button>
+          <button class="btn" id="btnNetMd"><span class="icon">&#xE74E;</span>导出网络 MD</button>
+          <button class="btn" id="btnNetPdf"><span class="icon">&#xE74E;</span>导出网络 PDF</button>
+          <button class="btn" id="btnSiteMd"><span class="icon">&#xE74E;</span>导出站点 MD</button>
+          <button class="btn" id="btnSitePdf"><span class="icon">&#xE74E;</span>导出站点 PDF</button>
+        </div>
+      </header>
+      <div id="netBody"><div class="ev-empty">尚未执行网络分析</div></div>
+    </section>
+
+    <!-- 动态分析页 -->
+    <section class="page" id="page-dynamic">
+      <header class="pagehead">
+        <div><h1>动态分析</h1><p>在受控作业内实际运行样本，采集进程树、网络外联、落盘与自启动写入行为，观测结束后强制终止。</p></div>
+        <div class="headactions">
+          <select class="input" id="dynSec" style="width:112px" title="观测时长：选“自定义”可填任意数值与单位，填 0 表示无限制">
+            <option value="8">观测 8 秒</option>
+            <option value="15" selected>观测 15 秒</option>
+            <option value="30">观测 30 秒</option>
+            <option value="60">观测 60 秒</option>
+            <option value="custom">自定义…</option>
+          </select>
+          <span id="dynSecCustom" style="display:none;align-items:center;gap:6px">
+            <input class="input" id="dynSecNum" type="number" min="0" step="1" value="120" style="width:86px" placeholder="0=无限制" title="填 0 表示无限制，直到手动停止或样本退出" />
+            <select class="input" id="dynSecUnit" style="width:76px" title="时长单位">
+              <option value="1">秒</option>
+              <option value="60" selected>分钟</option>
+              <option value="3600">小时</option>
+            </select>
+          </span>
+          <button class="btn accent" id="btnDynRun"><span class="icon">&#xE768;</span>运行动态分析</button>
+          <button class="btn" id="btnDynStop" disabled><span class="icon">&#xE71A;</span>停止</button>
+          <button class="btn" id="btnDynMd"><span class="icon">&#xE74E;</span>导出动态 MD</button>
+          <button class="btn" id="btnDynPdf"><span class="icon">&#xE74E;</span>导出动态 PDF</button>
+        </div>
+      </header>
+      <div id="dynBody"><div class="ev-empty">尚未执行动态分析。点击右上角"运行动态分析"会在受控环境中启动当前样本。</div></div>
+    </section>
+
+    <!-- 证据页 -->
+    <section class="page" id="page-evidence">
+      <header class="pagehead">
+        <div><h1>证据</h1><p>每个模块的原始结构化证据，可搜索、复制与定位文件。</p></div>
+        <div class="headactions">
+          <div class="searchbox"><span class="icon">&#xE721;</span><input id="evSearch" placeholder="在证据中搜索…" /></div>
+          <button class="btn" id="btnEvFolder"><span class="icon">&#xE8B7;</span>证据目录</button>
+        </div>
+      </header>
+      <div class="evidence-layout">
+        <div class="ev-list" id="evList"><div class="ev-empty">暂无证据</div></div>
+        <div class="ev-viewer">
+          <div class="ev-viewer-head">
+            <div class="ev-title" id="evTitle">未选择证据</div>
+            <div class="ev-tools">
+              <button class="btn small" id="btnEvCopy"><span class="icon">&#xE8C8;</span>复制</button>
+              <button class="btn small" id="btnEvRaw"><span class="icon">&#xE943;</span>原始文本</button>
+            </div>
+          </div>
+          <div class="ev-body" id="evBody"><div class="ev-empty">从左侧选择一项证据查看</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- AI 页 -->
+    <section class="page" id="page-ai">
+      <header class="pagehead">
+        <div><h1>AI 解读</h1><p id="aiIntro">让模型基于本次分析证据给出研判结论，支持本地模型与自定义云端模型。内置 Qwen3.5-0.8B（Q4_K_M），输出仅作辅助研判，关键结论请人工复核。</p></div>
+        <div class="headactions">
+          <div class="aistate" id="aiState"><span class="dot"></span><span id="aiStateText">未连接</span></div>
+          <button class="btn" id="btnAiStart"><span class="icon">&#xE768;</span>启动本地模型</button>
+        </div>
+      </header>
+      <div class="chat" id="chat">
+        <div class="chatmsg ai">
+          <div class="avatar">AI</div>
+          <div class="bubble">我是本地分析助手。先执行静态分析，我会结合实际证据给出结论；也可以直接询问如何理解某个模块的输出。</div>
+        </div>
+      </div>
+      <div class="composer">
+        <div class="chips">
+          <button class="chip" data-q="总结本次静态分析的主要发现">总结本次发现</button>
+          <button class="chip" data-q="这个样本有哪些可疑或高风险的迹象？">可疑迹象</button>
+          <button class="chip" data-q="导入表里有哪些值得关注的能力？">导入能力</button>
+          <button class="chip" data-q="给出下一步动态分析的取证建议">下一步建议</button>
+        </div>
+        <div class="inputrow">
+          <textarea id="chatInput" rows="1" placeholder="向分析助手提问…"></textarea>
+          <button class="btn accent" id="btnSend"><span class="icon">&#xE724;</span>发送</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 设置页 -->
+    <section class="page" id="page-settings">
+      <header class="pagehead"><div><h1>设置</h1><p>病毒库、推理服务、运行时与证据存储配置。</p></div></header>
+
+      <div class="card">
+        <div class="cardhead"><span class="icon">&#xEA18;</span>病毒库与检测</div>
+        <div class="kv" id="virusLibKv"></div>
+        <div class="row" style="margin-top:12px">
+          <label>在线同步</label>
+          <div class="modelrow">
+            <select id="virusSource" class="mono" style="max-width:230px">
+              <option value="threatbook" selected>微步威胁情报中心 · ThreatBook</option>
+              <option value="url">自定义情报地址</option>
+            </select>
+            <input id="virusApiKey" class="mono" placeholder="微步 API Key（v3 接口，必填）" style="max-width:200px" />
+            <input id="virusHashes" class="mono" placeholder="待查询哈希清单（可选，逗号或换行分隔；留空则同步当前目标样本）" />
+            <input id="virusUrl" class="mono hidden" placeholder="https://…/hashlist.txt 或 rules.yar" />
+            <button class="btn" id="btnVirusOnline"><span class="icon">&#xE895;</span>同步威胁情报</button>
+          </div>
+        </div>
+        <div class="row">
+          <label>本地导入</label>
+          <div class="modelrow">
+            <button class="btn" id="btnVirusImport"><span class="icon">&#xE8B5;</span>导入哈希/规则</button>
+            <button class="btn" id="btnVirusRules"><span class="icon">&#xE8A5;</span>查看命中规则</button>
+            <button class="btn" id="btnVirusDir"><span class="icon">&#xE838;</span>打开病毒库目录</button>
+            <button class="btn danger" id="btnVirusClear"><span class="icon">&#xE74D;</span>清空导入</button>
+          </div>
+        </div>
+        <div class="hint">内置规则库随程序发布，覆盖勒索、窃密、挖矿、远控、注入、持久化、横移、脚本投放等已知攻击族谱特征；可导入哈希清单（MD5/SHA1/SHA256，txt/csv/json）与外置 YARA 规则。检测只读取沙箱内的样本副本，样本不会被执行，主系统不被影响。</div>
+        <div class="hidden" id="virusRulesWrap" style="margin-top:12px"><div class="virushits" id="virusRules"></div></div>
+      </div>
+
+      <div class="card">
+        <div class="cardhead"><span class="icon">&#xE9D9;</span>CVE 漏洞库与检测</div>
+        <div class="kv" id="vulnLibKv"></div>
+        <div class="row" style="margin-top:12px">
+          <label>在线同步</label>
+          <div class="modelrow">
+            <select id="vulnSource" class="mono" style="max-width:230px">
+              <option value="cnnvd" selected>CNNVD · 国家信息安全漏洞库</option>
+              <option value="nvd">NVD · 美国国家漏洞库</option>
+            </select>
+            <input id="vulnKeyword" class="mono" placeholder="CNNVD：厂商/产品英文名 Microsoft,Google,openssl（留空拉最新）；NVD：组件名 openssl,chrome" />
+            <input id="vulnApiKey" class="mono" placeholder="NVD API Key（可选）" style="max-width:160px" />
+            <input id="vulnMax" class="mono" type="number" min="10" max="500" step="10" value="200" title="单次最多拉取条数（10~500）" style="max-width:110px" />
+            <button class="btn" id="btnVulnOnline"><span class="icon">&#xE895;</span>同步 CVE</button>
+          </div>
+        </div>
+        <div class="row">
+          <label>本地导入</label>
+          <div class="modelrow">
+            <button class="btn" id="btnVulnImport"><span class="icon">&#xE8B5;</span>导入 CVE 库</button>
+            <button class="btn" id="btnVulnRules"><span class="icon">&#xE8A5;</span>查看 CVE 条目</button>
+            <button class="btn" id="btnVulnDir"><span class="icon">&#xE838;</span>打开 CVE 库目录</button>
+            <button class="btn danger" id="btnVulnClear"><span class="icon">&#xE74D;</span>清空导入</button>
+          </div>
+        </div>
+        <div class="hint">内置 CVE 库取自 NVD（nvd.nist.gov），覆盖 OpenSSL、zlib、libpng、libxml2、SQLite、curl、OpenSSH、Log4j、Struts、Spring、Tomcat、WebLogic、fastjson、jQuery 等常见第三方组件；检测先识别组件版本（版本资源、导入表、字符串 banner），再按版本区间与特征做匹配。可导入 CSV/JSON（字段：cveId/component/kind/affected/min/max/cvss/severity/desc/fix），或在线同步两个来源：NVD（按组件关键词精确检索）、CNNVD 国家信息安全漏洞库 www.cnnvd.org.cn（厂商/产品维度检索，字典大小写敏感，程序会自动尝试大小写变体；未收录的词回退为最新漏洞本地筛选，关键词留空则直接拉取最新漏洞）。CNNVD 条目按组件名匹配、附带详情链接与 CNNVD 定级，版本仍需人工核对；同步结果带来源标记并可从“查看 CVE 条目”中核对，“清空导入”可整体撤销外部同步与导入内容。检测只读取沙箱内的样本副本，样本不会被执行。</div>
+        <div class="hidden" id="vulnRulesWrap" style="margin-top:12px"><div class="virushits" id="vulnRules"></div></div>
+      </div>
+
+      <div class="card">
+        <div class="cardhead"><span class="icon">&#xE99A;</span>推理服务</div>
+        <div class="row">
+          <label>运行模式</label>
+          <div class="segmented" id="aiMode">
+            <button data-mode="local" class="on">本地模型</button>
+            <button data-mode="cloud">云端模型</button>
+            <button data-mode="off">关闭</button>
+          </div>
+        </div>
+        <div class="row">
+          <label>本地模型</label>
+          <div class="modelbox">
+            <div class="modelstate"><span class="dot warn" id="modelDot"></span><span id="modelStateText">正在检测本地模型…</span></div>
+            <div class="modeltip" id="modelStateHint">检测本地是否已有 GGUF 模型；缺失时可从魔搭在线下载。</div>
+            <div class="modelactions">
+              <button class="btn accent" id="btnModelDownload"><span class="icon">&#xE896;</span>下载模型</button>
+              <button class="btn" id="btnPickModel"><span class="icon">&#xE710;</span>添加本地模型</button>
+              <button class="btn" id="btnModelDir"><span class="icon">&#xE838;</span>模型目录</button>
+            </div>
+          </div>
+        </div>
+        <div class="row">
+          <label>模型路径</label>
+          <div class="modelrow">
+            <input id="setModel" class="mono" placeholder="留空则自动使用内置或已下载模型" />
+          </div>
+        </div>
+        <div class="hint" id="modelHint">支持 .gguf 单文件模型；选择后会写入本地模型路径，保存设置后生效。</div>
+        <div class="row"><label>服务端口</label><input id="setPort" type="number" /></div>
+        <div class="row"><label>上下文长度</label><input id="setCtx" type="number" /></div>
+        <div class="row"><label>云端接口</label><input id="setBase" class="mono" placeholder="https://api.deepseek.com/v1" /></div>
+        <div class="row"><label>云端模型</label><input id="setCloudModel" class="mono" /></div>
+        <div class="row"><label>API Key</label><input id="setKey" type="password" placeholder="sk-…" /></div>
+        <div class="row"><label></label><div><button class="btn accent" id="btnSaveSettings">保存设置</button></div></div>
+      </div>
+
+      <div class="card">
+        <div class="cardhead"><span class="icon">&#xE946;</span>运行时与路径</div>
+        <div class="kv" id="settingsKv"></div>
+      </div>
+
+      <div class="card">
+        <div class="cardhead"><span class="icon">&#xE946;</span>关于</div>
+        <div class="about">
+          <p><b>REA Studio</b> 是面向本机样本的离线逆向分析工具：拖入本机可执行文件、程序集或制品，即可完成类型识别、静态解析、网络行为还原、站点抓取与 AI 解读，并一键导出 Markdown / PDF 报告。全部分析与推理均在本机完成，样本与结论不出本机、不上传云端。</p>
+          <p class="mono" id="aboutVer"></p>
+          <img class="aboutlogo" src="assets/logo.png" alt="科创云玄武安全实验室" title="科创云·玄武 网络安全实验室" />
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="mask hidden" id="modelLibMask">
+  <div class="dialog">
+    <div class="dialoghead">
+      <div>
+        <b>模型库</b>
+        <span class="subtle" id="modelLibSub">来源：魔搭社区 ModelScope · 下载后自动设为当前本地模型</span>
+      </div>
+      <button class="captionbtn" id="btnModelLibClose">&#xE711;</button>
+    </div>
+    <div class="dialogbody" id="modelLibBody">
+      <div class="junk">正在读取模型列表…</div>
+    </div>
+    <div class="dialogfoot">
+      <div class="repoRow">
+        <input id="modelRepoInput" class="mono" placeholder="自定义仓库 owner/name，例如 Qwen/Qwen3-1.7B-GGUF" />
+        <button class="btn" id="btnModelRepoLoad">载入</button>
+      </div>
+      <div class="dlstatus" id="modelDlStatus"></div>
+      <div class="progressbar hidden" id="modelDlBar"><div class="progressfill" id="modelDlFill"></div></div>
+      <div class="dialogactions">
+        <button class="btn" id="btnModelDlCancel">取消下载</button>
+        <button class="btn accent" id="btnModelLibDone">关闭</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

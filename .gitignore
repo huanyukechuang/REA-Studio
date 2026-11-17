@@ -22,3 +22,48 @@ $RECYCLE.BIN/
 
 # Windows shortcuts
 *.lnk
+~$*
+
+# ── 构建产物 ─────────────────────────────
+build/
+output/
+temp/
+dist/
+publish*/
+
+# ── .NET 中间产物 ────────────────────────
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+.vs/
+
+# ── 内嵌载荷与大模型（体积过大，不入库） ──
+payload/
+src/ReaStudio/payload/
+*.gguf
+*.zip
+*.7z
+*.tar
+*.gz
+
+# ── Python ───────────────────────────────
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ── 日志与临时文件 ───────────────────────
+*.log
+build*.txt
+setup_log.txt
+chk.txt
+*.tmp
+*.bak
+*.bak_*
+*_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_*.csproj
+
+# ── 编辑器 ───────────────────────────────
+.idea/
+.vscode/
+*.swp

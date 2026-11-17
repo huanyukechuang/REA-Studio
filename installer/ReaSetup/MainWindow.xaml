@@ -1,0 +1,177 @@
+<Window x:Class="ReaSetup.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="REA Studio 安装程序" Width="660" Height="540" ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen" WindowStyle="None"
+        Background="{StaticResource PageBgBrush}"
+        FontFamily="Segoe UI Variable Text, Segoe UI" UseLayoutRounding="True"
+        SnapsToDevicePixels="True" TextOptions.TextFormattingMode="Display">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="0" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False" />
+    </shell:WindowChrome.WindowChrome>
+
+    <Border x:Name="RootBorder" Background="{StaticResource PageBgBrush}" BorderBrush="#FFE0E0E0" BorderThickness="1">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="44" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="72" />
+            </Grid.RowDefinitions>
+
+            <!-- 标题栏 -->
+            <Grid Grid.Row="0" Background="Transparent" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                    <Image x:Name="TitleIcon" Width="18" Height="18" Source="resources/app.ico" RenderOptions.BitmapScalingMode="HighQuality" />
+                    <TextBlock Text="REA Studio 安装程序" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                </StackPanel>
+                <Button x:Name="BtnClose" HorizontalAlignment="Right" Width="46" Height="32" Margin="0,0,0,0"
+                        Background="Transparent" BorderThickness="0" Cursor="Hand" Click="BtnClose_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="Transparent">
+                                <TextBlock Text="&#xE8BB;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11"
+                                           Foreground="#FF3B3B3B" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#FFE81123" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </Grid>
+
+            <!-- 内容区 -->
+            <Grid Grid.Row="1">
+
+                <!-- 步骤一：欢迎 -->
+                <Grid x:Name="Page1" Margin="36,4,36,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Image Grid.Row="0" Height="60" Source="resources/logo_sti.png" Stretch="Uniform"
+                           RenderOptions.BitmapScalingMode="HighQuality" HorizontalAlignment="Left" />
+                    <StackPanel Grid.Row="1" Margin="0,16,0,0">
+                        <TextBlock Text="REA Studio" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="30" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}" />
+                        <TextBlock x:Name="TxtVersion" Text="版本 1.0.0 · 本地逆向分析工作台" FontSize="13"
+                                   Foreground="{StaticResource TextSecondaryBrush}" Margin="0,6,0,0" />
+                    </StackPanel>
+                    <Border Grid.Row="2" Background="{StaticResource CardBgBrush}" BorderBrush="{StaticResource CardBorderBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="18,16" Margin="0,20,0,0" VerticalAlignment="Top">
+                        <StackPanel>
+                            <TextBlock Text="安装内容" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}" />
+                            <TextBlock Text="· 逆向分析运行时（Node / REA Agents，完整随包安装）" FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,10,0,0" />
+                            <TextBlock x:Name="TxtModelLine" Text="· 本地大模型（Qwen 量化模型，离线可用的 AI 分析，随包安装）" FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,7,0,0" />
+                            <TextBlock Text="· 病毒特征库与漏洞库（CNNVD 国家信息安全漏洞库为主源）" FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,7,0,0" />
+                            <TextBlock Text="· 报告导出引擎（HTML / Markdown / PDF）" FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,7,0,0" />
+                            <Border Height="1" Background="#FFEDEDED" Margin="0,14,0,12" />
+                            <TextBlock x:Name="TxtPackageInfo" Text="安装包约 2.9 GB，安装后占用约 2.9 GB 磁盘空间。" FontSize="12.5"
+                                       Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Grid.Row="3" Text="所有分析均在本地完成，样本仅在沙箱内只读比对，不上传、不执行。"
+                               FontSize="12" Foreground="#FF8A8A8A" Margin="0,14,0,0" TextWrapping="Wrap" />
+                </Grid>
+
+                <!-- 步骤二：安装选项 -->
+                <Grid x:Name="Page2" Margin="36,4,36,0" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="选择安装位置" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="22"
+                               FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}" />
+                    <StackPanel Grid.Row="1" Margin="0,8,0,0">
+                        <TextBlock Text="REA Studio 将安装到以下文件夹。" FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" />
+                    </StackPanel>
+
+                    <Grid Grid.Row="2" Margin="0,18,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="TxtPath" Grid.Column="0" Style="{StaticResource FluentTextBox}" IsReadOnly="True" />
+                        <Button x:Name="BtnBrowse" Grid.Column="1" Content="浏览…" Style="{StaticResource FluentButton}" Margin="10,0,0,0" Click="BtnBrowse_Click" />
+                    </Grid>
+
+                    <StackPanel Grid.Row="3" Margin="0,22,0,0">
+                        <TextBlock Text="安装选项" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}" />
+                        <CheckBox x:Name="ChkDesktop" Content="创建桌面快捷方式" Style="{StaticResource FluentCheckBox}" IsChecked="True" Margin="0,14,0,0" />
+                        <CheckBox x:Name="ChkStartMenu" Content="添加到开始菜单" Style="{StaticResource FluentCheckBox}" IsChecked="True" Margin="0,12,0,0" />
+                        <CheckBox x:Name="ChkLaunch" Content="安装完成后启动 REA Studio" Style="{StaticResource FluentCheckBox}" IsChecked="True" Margin="0,12,0,0" />
+                        <Border Background="#FFF7F7F7" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1" CornerRadius="8"
+                                Padding="14,10" Margin="0,20,0,0">
+                            <TextBlock x:Name="TxtSpace" Text="所需磁盘空间：约 2.9 GB" FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" />
+                        </Border>
+                    </StackPanel>
+                </Grid>
+
+                <!-- 步骤三：安装进度 / 完成 -->
+                <Grid x:Name="Page3" Margin="36,4,36,0" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Orientation="Horizontal">
+                        <Border x:Name="DoneBadge" Width="40" Height="40" CornerRadius="20" Background="#FFE8F5E9" Visibility="Collapsed">
+                            <TextBlock Text="&#xE73E;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="18"
+                                       Foreground="#FF107C10" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel Margin="0,0,0,0" VerticalAlignment="Center">
+                            <TextBlock x:Name="TxtStepTitle" Text="正在安装 REA Studio" FontFamily="Segoe UI Variable Display, Segoe UI"
+                                       FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}" />
+                            <TextBlock x:Name="TxtStepSub" Text="正在复制程序与本地模型，请勿关闭窗口。" FontSize="12.5"
+                                       Foreground="{StaticResource TextSecondaryBrush}" Margin="0,6,0,0" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <Grid Grid.Row="1" x:Name="ProgHost" Height="4" Margin="0,26,0,0">
+                        <Border Background="{StaticResource TrackBrush}" CornerRadius="2" />
+                        <Border x:Name="ProgFill" Background="{StaticResource AccentBrush}" CornerRadius="2" HorizontalAlignment="Left" Width="0" />
+                    </Grid>
+
+                    <TextBlock x:Name="TxtPercent" Grid.Row="2" Text="0%" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,10,0,0" />
+
+                    <StackPanel Grid.Row="3" x:Name="DonePanel" Visibility="Collapsed" Margin="0,24,0,0">
+                        <Border Background="{StaticResource CardBgBrush}" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1"
+                                CornerRadius="8" Padding="16,14">
+                            <StackPanel>
+                                <TextBlock Text="安装已完成" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}" />
+                                <TextBlock x:Name="TxtInstallDir" Text="" FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}"
+                                           Margin="0,8,0,0" TextWrapping="Wrap" />
+                                <CheckBox x:Name="ChkLaunchDone" Content="立即启动 REA Studio" Style="{StaticResource FluentCheckBox}"
+                                          IsChecked="True" Margin="0,14,0,0" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+
+            <!-- 底部操作栏 -->
+            <Border Grid.Row="2" Background="#FFF7F7F7" BorderBrush="#FFE8E8E8" BorderThickness="0,1,0,0">
+                <Grid Margin="24,0">
+                    <TextBlock x:Name="TxtFooter" VerticalAlignment="Center" FontSize="12" Foreground="#FF8A8A8A"
+                               Text="© 环宇科创 · 科创云玄武安全实验室" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <Button x:Name="BtnCancel" Content="取消" Style="{StaticResource FluentButton}" Width="92" Click="BtnCancel_Click" />
+                        <Button x:Name="BtnBack" Content="上一步" Style="{StaticResource FluentButton}" Width="92" Margin="10,0,0,0"
+                                Visibility="Collapsed" Click="BtnBack_Click" />
+                        <Button x:Name="BtnNext" Content="下一步" Style="{StaticResource FluentPrimaryButton}" Width="106" Margin="10,0,0,0"
+                                Click="BtnNext_Click" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+    </Border>
+</Window>

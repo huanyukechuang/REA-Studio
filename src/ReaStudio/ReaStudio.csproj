@@ -1,0 +1,40 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net6.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>REAStudio</AssemblyName>
+    <RootNamespace>ReaStudio</RootNamespace>
+    <Version>1.0.0</Version>
+    <Product>REA Studio</Product>
+    <AssemblyTitle>REA Studio</AssemblyTitle>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>resources\app.ico</ApplicationIcon>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>none</DebugType>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2210.55" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="ui\**\*.*" LogicalName="ui/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Resource Include="resources\app.ico" />
+  </ItemGroup>
+
+  <!-- 载荷默认不内嵌（PE 总资源超 2GB 会让 Roslyn 报 CS1566），改由 build.py 追加到 EXE 尾部 -->
+  <ItemGroup Condition="Exists('payload\payload.zip')">
+    <EmbeddedResource Include="payload\payload.zip" LogicalName="payload.zip" />
+  </ItemGroup>
+
+</Project>

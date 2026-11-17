@@ -1,0 +1,24 @@
+﻿<Window x:Class="ReaStudio.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="REA Studio" Height="820" Width="1320" MinHeight="620" MinWidth="1040"
+        Icon="resources/app.ico"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None" Background="#FF1B1B1F" UseLayoutRounding="True"
+        SnapsToDevicePixels="True" TextOptions.TextFormattingMode="Display">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False" />
+    </shell:WindowChrome.WindowChrome>
+    <Grid x:Name="RootGrid" Background="#FF1B1B1F">
+        <wv2:WebView2 x:Name="Web" DefaultBackgroundColor="#FF1B1B1F" />
+        <Grid x:Name="Splash" Background="#FF1B1B1F">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                <TextBlock Text="REA Studio" FontSize="30" FontWeight="SemiBold" Foreground="#FFF2F2F4" HorizontalAlignment="Center"/>
+                <TextBlock x:Name="SplashText" Text="正在初始化本地逆向运行时…" FontSize="13" Foreground="#FF9A9AA6"
+                           Margin="0,14,0,0" HorizontalAlignment="Center"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
