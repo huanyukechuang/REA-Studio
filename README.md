@@ -379,5 +379,4 @@ REA-Inverse/
   <img src="src/ReaStudio/ui/assets/logo.png" width="320" alt="科创云·玄武 网络安全实验室">
 </p>
 
-<p align="center">©科创云玄武安全实验室</p>
-*（内容由AI生成，仅供参考）*
+<p align="center">©环宇科创-科创云玄武安全实验室</p>
