@@ -97,6 +97,11 @@ namespace ReaStudio.Services
                     case "target.info":
                         Reply(id, DescribePath(Str(paramsEl, "path")));
                         break;
+                    case "target.paths":
+                        // 拖入/粘贴文件时由 postMessageWithAdditionalObjects 附带 File 对象，
+                        // 从 e.AdditionalObjects 取 CoreWebView2File.Path（不依赖已移除的 File.path）
+                        Reply(id, AdditionalPaths(e));
+                        break;
                     case "modules.list":
                         Reply(id, Modules.ForFile(Str(paramsEl, "path")).Select(m => m.ToDto()).ToArray());
                         break;
@@ -220,6 +225,13 @@ namespace ReaStudio.Services
                                     });
                             var answer = await AiService.ChatAsync(msgs).ConfigureAwait(false);
                             Reply(id, new { content = answer });
+                            break;
+                        }
+                    case "log.write":
+                        {
+                            var uiMsg = Str(paramsEl, "msg");
+                            if (!string.IsNullOrEmpty(uiMsg)) Log.Write("[ui] " + uiMsg);
+                            Reply(id, true);
                             break;
                         }
                     case "window.min":
@@ -599,7 +611,7 @@ namespace ReaStudio.Services
         private object AppStatus() => new
         {
             app = "REA Studio",
-            version = typeof(Bridge).Assembly.GetName().Version?.ToString(3) ?? "1.0.0",
+            version = typeof(Bridge).Assembly.GetName().Version?.ToString(3) ?? "1.0.1",
             payloadReady = Storage.PayloadReady,
             payloadKind = Storage.PayloadKind,
             runtimeRoot = Storage.RuntimeRoot,
@@ -637,6 +649,31 @@ namespace ReaStudio.Services
                 };
             }
             catch { return null; }
+        }
+
+        /// <summary>
+        /// 拖放取路径。Chromium 137 起移除了非标准 File.path，新版 WebView2 拖入文件时
+        /// dataTransfer 里也不再提供 text/uri-list，前端只能把 File 对象交给宿主，
+        /// 由 CoreWebView2File.Path 取真实本地路径（postMessageWithAdditionalObjects）。
+        /// </summary>
+        private static string[] AdditionalPaths(CoreWebView2WebMessageReceivedEventArgs e)
+        {
+            var list = new List<string>();
+            try
+            {
+                var objs = e.AdditionalObjects;
+                Log.Write("[drop] additional=" + (objs == null ? "null" : objs.Count.ToString()));
+                if (objs == null) return Array.Empty<string>();
+                foreach (var obj in objs)
+                {
+                    if (obj is CoreWebView2File file && !string.IsNullOrWhiteSpace(file.Path))
+                        list.Add(file.Path);
+                    else
+                        Log.Write("[drop] 未取到路径, 对象类型=" + (obj == null ? "null" : obj.GetType().Name));
+                }
+            }
+            catch (Exception ex) { Log.Write("[drop] 读取附加对象失败: " + ex.Message); }
+            return list.ToArray();
         }
 
         private object? PickFile()

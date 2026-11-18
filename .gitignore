@@ -67,3 +67,6 @@ chk.txt
 .idea/
 .vscode/
 *.swp
+
+# 版本说明文档仅本地交付，不入库
+CHANGELOG.md

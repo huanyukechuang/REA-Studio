@@ -106,19 +106,115 @@ $$('.navitem').forEach(b => b.onclick = () => navigate(b.dataset.page));
 $('#btnPick').onclick = async () => { await pickTarget(); };
 
 const dz = $('#dropzone');
-['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, (e) => {
-  e.preventDefault(); e.stopPropagation(); dz.classList.add('hot');
-}));
-['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, (e) => {
-  e.preventDefault(); e.stopPropagation(); dz.classList.remove('hot');
-}));
-dz.addEventListener('drop', async (e) => {
-  const uri = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain') || '';
-  const line = uri.split(/\r?\n/).find(x => x.trim().startsWith('file://'));
-  if (!line) { toast('未能读取本地路径，请使用“选择文件”'); return; }
-  let p = decodeURIComponent(line.trim().replace(/^file:\/+/, ''));
-  p = p.replace(/\//g, '\\').replace(/\\$/, '');
-  await openPath(p);
+
+function dzHot(on) { if (dz) dz.classList.toggle('hot', on); }
+
+// 前端诊断日志：经 Bridge 写入宿主机日志，便于排查拖放链路
+function uiLog(msg) {
+  try {
+    const r = invoke('log.write', { msg: '' + msg });
+    if (r && r.catch) r.catch(function () { });
+  } catch (e) { /* ignore */ }
+}
+
+// 只接管"拖文件"，拖文本进输入框等操作不受影响
+function hasDroppedFiles(e) {
+  const dt = e.dataTransfer;
+  if (!dt) return false;
+  const t = dt.types;
+  if (t && Array.prototype.indexOf.call(t, 'Files') >= 0) return true;
+  return !!(dt.files && dt.files.length); // 少数情况下 types 缺失但 files 已就绪
+}
+
+/* Chromium 137 起移除了非标准 File.path，新版 WebView2 拖入文件时 dataTransfer 也不再带
+   text/uri-list，于是"拖入读不到本地路径"。唯一可靠的官方途径是宿主侧的
+   CoreWebView2File.Path：前端用 postMessageWithAdditionalObjects 把 File 对象交给宿主换取路径。 */
+function requestPathsFromFiles(files) {
+  return new Promise((resolve, reject) => {
+    const list = Array.from(files || []);
+    if (!host || typeof host.postMessageWithAdditionalObjects !== 'function') { uiLog('drop: 宿主不支持 postMessageWithAdditionalObjects'); reject(new Error('当前宿主不支持拖放取路径')); return; }
+    if (!list.length) { uiLog('drop: dataTransfer.files 为空'); reject(new Error('未检测到拖入的文件')); return; }
+    const id = 'r' + (++seq);
+    pending.set(id, { resolve, reject });
+    try {
+      host.postMessageWithAdditionalObjects({ id, method: 'target.paths', params: {} }, list);
+      uiLog('drop: 已发送 target.paths, files=' + list.length + ', type=' + (list[0] && list[0].constructor && list[0].constructor.name));
+    } catch (err) {
+      pending.delete(id);
+      uiLog('drop: postMessageWithAdditionalObjects 异常 ' + err.message);
+      reject(err);
+      return;
+    }
+    setTimeout(() => {
+      if (pending.has(id)) { pending.delete(id); uiLog('drop: target.paths 超时'); reject(new Error('调用超时: target.paths')); }
+    }, 60000);
+  });
+}
+
+// 老宿主兜底：仍能拿到 file:// 的 uri-list 时直接解析
+function pathFromUriList(dt) {
+  try {
+    const uri = dt.getData('text/uri-list') || dt.getData('text/plain') || '';
+    const line = uri.split(/\r?\n/).find(x => x.trim().startsWith('file://'));
+    if (!line) return '';
+    return decodeURIComponent(line.trim().replace(/^file:\/+/, '')).replace(/\//g, '\\').replace(/\\$/, '');
+  } catch { return ''; }
+}
+
+let dropBusy = false;
+
+// 统一入口：drop（拖入）与 paste（Ctrl+V 粘贴文件）共用同一条取路径链路
+async function handleFileList(files, dt) {
+  const list = Array.from(files || []);
+  const types = (dt && dt.types) ? Array.prototype.join.call(dt.types, '|') : '-';
+  const kinds = (dt && dt.items) ? Array.prototype.map.call(dt.items, function (i) { return i.kind + ':' + i.type; }).join('|') : '-';
+  uiLog('drop: n=' + list.length + ' types=' + types + ' items=' + kinds);
+  if (!list.length || dropBusy) return;
+  dropBusy = true;
+  dzHot(false);
+  try {
+    let p = '';
+    try {
+      const paths = await requestPathsFromFiles(list);
+      uiLog('drop: 宿主返回 ' + JSON.stringify(paths || []));
+      p = (paths && paths.length) ? paths[0] : '';
+    } catch (err) {
+      uiLog('drop: 取路径失败 ' + (err && err.message));
+      if (window.console && console.warn) console.warn('[drop] target.paths 失败', err);
+    }
+    if (!p && dt) p = pathFromUriList(dt);
+    if (!p) { toast('未能读取拖入路径，已打开文件选择窗口'); await pickTarget(); return; }
+    await openPath(p);
+  } finally {
+    dropBusy = false;
+  }
+}
+
+async function handleDrop(e) {
+  if (!hasDroppedFiles(e) || dropBusy) return;
+  e.preventDefault();
+  e.stopPropagation();
+  await handleFileList(e.dataTransfer && e.dataTransfer.files, e.dataTransfer);
+}
+
+// 监听挂在 document 上：任意页面拖入文件都能指定/更换目标
+document.addEventListener('dragenter', (e) => { if (hasDroppedFiles(e)) { e.preventDefault(); dzHot(true); } });
+document.addEventListener('dragover', (e) => {
+  if (!hasDroppedFiles(e)) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  dzHot(true);
+});
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) dzHot(false); });
+document.addEventListener('drop', (e) => { if (hasDroppedFiles(e)) handleDrop(e); });
+
+// 通道C：Ctrl+V 粘贴文件（在资源管理器 Ctrl+C 复制文件后，回到应用内直接粘贴即可指定目标）
+document.addEventListener('paste', (e) => {
+  const cd = e.clipboardData;
+  const files = cd && cd.files;
+  if (!files || !files.length) return; // 纯文本粘贴交给输入框，不拦截
+  e.preventDefault();
+  handleFileList(files, cd);
 });
 
 document.addEventListener('keydown', (e) => {
@@ -128,7 +224,7 @@ document.addEventListener('keydown', (e) => {
 async function openPath(p) {
   try {
     const t = await invoke('target.info', { path: p });
-    if (t) await setTarget(t); else toast('无法读取该路径');
+    if (t) await setTarget(t); else toast('无法读取该路径（需为本地已存在的文件）');
   } catch (e) { toast(e.message); }
 }
 
@@ -414,6 +510,14 @@ function buildNode(value, depth, key) {
 
 /* ---------- 事件 ---------- */
 function onEvent(name, data) {
+  if (name === 'drop.hover') { dzHot(!!(data && data.on)); return; }
+  if (name === 'drop.files') {
+    dzHot(false);
+    const dp = (data && data.paths) || [];
+    if (!dp.length) { toast('未能读取拖入路径，已打开文件选择窗口'); pickTarget(); return; }
+    openPath(dp[0]);
+    return;
+  }
   if (name === 'model.progress') { onModelProgress(data); return; }
   if (name === 'dynamic.log') {
     const box = $('#dynBody');

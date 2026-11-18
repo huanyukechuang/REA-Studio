@@ -7,7 +7,7 @@
 ![platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%207--11-0078d4)
 ![runtime](https://img.shields.io/badge/runtime-%E5%86%85%E5%B5%8C%C2%B7%E6%97%A0%E9%9C%80%E5%AE%89%E8%A3%85-2ea44f)
 ![model](https://img.shields.io/badge/built--in%20model-Qwen3.5--0.8B%20(Q4__K__M)-8957e5)
-![version](https://img.shields.io/badge/version-1.0.0-orange)
+![version](https://img.shields.io/badge/version-1.0.1-orange)
 
 ---
 
@@ -337,6 +337,15 @@ REA-Inverse/
 ---
 
 ## 更新日志
+
+### v1.0.1
+
+- 修复拖入文件提示「未能读取本地路径」的问题。根因有两处：主窗口把 WebView2 的 `AllowExternalDrop` 置为 `false`，切断了页面接收系统拖放的通道；同时宿主端缺少 `target.paths` 消息分支，取路径方法成为未被调用的死代码
+- 取路径改为主通道 `postMessageWithAdditionalObjects` + `CoreWebView2File.Path`，不再依赖 Chromium 137 起已移除的 `File.path` 与不再提供的 `text/uri-list`
+- 保留主窗口原生 OLE 拖放（`CF_HDROP`）作为兜底通道，WebView2 未接管拖放时仍可取到路径
+- 新增 Ctrl+V 粘贴文件指定目标，与拖入共用同一取路径链路；纯文本粘贴不受影响
+- 拖放监听挂在 `document` 上，任意页面拖入即可切换目标并清空上次分析结果
+- 新增 `log.write` 前端诊断通道，拖放全链路可写入宿主日志
 
 ### v1.0.0
 

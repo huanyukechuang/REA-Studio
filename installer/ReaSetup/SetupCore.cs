@@ -14,7 +14,7 @@ namespace ReaSetup
         public const string AppNameNoModel = "REA Studio(no model)";
         public const string AppExeFull = "REAStudio.exe";
         public const string AppExeNoModel = "REA Studio(no model).exe";
-        public const string AppVersion = "1.0.0";
+        public const string AppVersion = "1.0.1";
         public const string Publisher = "环宇科创 · 科创云玄武安全实验室";
         public const string UninstallKeyFull = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\REAStudio";
         public const string UninstallKeyNoModel = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\REAStudio-NoModel";

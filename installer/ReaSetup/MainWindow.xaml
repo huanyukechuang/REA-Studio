@@ -59,7 +59,7 @@
                     <StackPanel Grid.Row="1" Margin="0,16,0,0">
                         <TextBlock Text="REA Studio" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="30" FontWeight="SemiBold"
                                    Foreground="{StaticResource TextPrimaryBrush}" />
-                        <TextBlock x:Name="TxtVersion" Text="版本 1.0.0 · 本地逆向分析工作台" FontSize="13"
+                        <TextBlock x:Name="TxtVersion" Text="版本 1.0.1 · 本地逆向分析工作台" FontSize="13"
                                    Foreground="{StaticResource TextSecondaryBrush}" Margin="0,6,0,0" />
                     </StackPanel>
                     <Border Grid.Row="2" Background="{StaticResource CardBgBrush}" BorderBrush="{StaticResource CardBorderBrush}"

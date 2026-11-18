@@ -7,7 +7,8 @@
         Icon="resources/app.ico"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None" Background="#FF1B1B1F" UseLayoutRounding="True"
-        SnapsToDevicePixels="True" TextOptions.TextFormattingMode="Display">
+        SnapsToDevicePixels="True" TextOptions.TextFormattingMode="Display"
+        AllowDrop="True" PreviewDragOver="OnHostDragOver" PreviewDragLeave="OnHostDragLeave" PreviewDrop="OnHostDrop">
     <shell:WindowChrome.WindowChrome>
         <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False" />
     </shell:WindowChrome.WindowChrome>

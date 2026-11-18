@@ -8,7 +8,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>REASetup</AssemblyName>
     <RootNamespace>ReaSetup</RootNamespace>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Product>REA Studio</Product>
     <AssemblyTitle>REA Studio 安装程序</AssemblyTitle>
     <ApplicationIcon>resources\app.ico</ApplicationIcon>

@@ -7,7 +7,7 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>REAStudio</AssemblyName>
     <RootNamespace>ReaStudio</RootNamespace>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Product>REA Studio</Product>
     <AssemblyTitle>REA Studio</AssemblyTitle>
     <ApplicationManifest>app.manifest</ApplicationManifest>
