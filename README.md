@@ -363,9 +363,6 @@ v1.1.0 已修复：沙箱状态卡片改为随分析事件（`analysis.begin/don
 - 已知限制与文档同步：动态执行不再标注为「未实现」，改为写明两级隔离构成、无驱动/无 HOOK 的边界，以及网络阻断的路径匹配限制
 - 修复**沙箱作业面未建立**的观感问题：前端此前只在启动时取一次沙箱状态，分析开始后卡片停留在旧会话。现按 `analysis.begin/done`、`virus.begin`、`vuln.begin`、`dynamic.isolation/done`、`sandbox.begin` 等事件驱动刷新（500 ms 去抖合并），状态卡片与当前作业同步
 - 修复一次分析开多个沙箱会话：`Sandbox.Ensure()` 改为同一会话内复用作业域，并按需合并 `file+out+site` 作业标签（回写 `session.json`），不再每换作业域就轮换新会话
-- 版本号统一为 1.1.0：`ReaStudio.csproj` / `ReaSetup.csproj` 的 `<Version>`，并同步 `Bridge.AppStatus()` 版本兜底、`SetupCore.AppVersion` 兜底与安装向导页脚显示，避免界面、卸载项与实际产物版本不一致
-
-> 验证：`dotnet build` 通过；四产物重打后文件版本 `1.1.0.0`、产品版本 `1.1.0`；沙箱状态卡片在分析开始后由「未建立」切换为运行中，同一轮分析复用同一会话 ID。加壳/加固命中率因无样本集未做回归实测。
 
 ### v1.0.2
 
