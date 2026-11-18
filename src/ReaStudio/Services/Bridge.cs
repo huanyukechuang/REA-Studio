@@ -224,6 +224,7 @@ namespace ReaStudio.Services
                                         Content = m.TryGetProperty("content", out var c) ? c.GetString() ?? "" : ""
                                     });
                             var answer = await AiService.ChatAsync(msgs).ConfigureAwait(false);
+                            Log.Write("[ai] chat ok len=" + (answer ?? "").Length);
                             Reply(id, new { content = answer });
                             break;
                         }

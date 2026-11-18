@@ -1400,9 +1400,10 @@ async function sendChat() {
 
   try {
     const r = await invoke('ai.chat', { messages });
-    bubble.textContent = r.content || '(空响应)';
+    const answer = (r && r.content) ? String(r.content).trim() : '';
+    bubble.textContent = answer || '本地模型没有产出正文（推理过程占满了输出上限）。请重试，或在“设置 → 最大输出”里调大数值后重新提问。';
     state.chat.push({ role: 'user', content: q });
-    state.chat.push({ role: 'assistant', content: r.content || '' });
+    state.chat.push({ role: 'assistant', content: answer });
   } catch (e) {
     bubble.textContent = '调用失败：' + e.message;
   }
@@ -1416,7 +1417,8 @@ async function loadSettings() {
     state.aiSettings = s;
     $('#setModel').value = s.localModel || '';
     $('#setPort').value = s.localPort || 8791;
-    $('#setCtx').value = s.contextSize || 4096;
+    $('#setCtx').value = s.contextSize || 8192;
+    if ($('#setMaxTokens')) $('#setMaxTokens').value = s.maxTokens || 2048;
     $('#setBase').value = s.cloudBaseUrl || '';
     $('#setCloudModel').value = s.cloudModel || '';
     $('#setKey').value = s.cloudApiKey || '';
@@ -1640,7 +1642,8 @@ $('#btnSaveSettings').onclick = async () => {
     mode: (document.querySelector('#aiMode button.on') || {}).dataset ? document.querySelector('#aiMode button.on').dataset.mode : 'local',
     localModel: $('#setModel').value.trim(),
     localPort: Number($('#setPort').value) || 8791,
-    contextSize: Number($('#setCtx').value) || 4096,
+    contextSize: Number($('#setCtx').value) || 8192,
+    maxTokens: Number(($('#setMaxTokens') || {}).value) || 2048,
     threads: 0,
     cloudBaseUrl: $('#setBase').value.trim(),
     cloudApiKey: $('#setKey').value,
@@ -1652,7 +1655,8 @@ $('#btnSaveSettings').onclick = async () => {
     state.aiSettings = saved;
     if (saved) {
       $('#setModel').value = saved.localModel || '';
-      $('#setCtx').value = saved.contextSize || 4096;
+      $('#setCtx').value = saved.contextSize || 8192;
+      if ($('#setMaxTokens')) $('#setMaxTokens').value = saved.maxTokens || 2048;
       $('#setPort').value = saved.localPort || 8791;
       $('#setBase').value = saved.cloudBaseUrl || '';
       $('#setCloudModel').value = saved.cloudModel || '';
