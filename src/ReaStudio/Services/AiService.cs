@@ -8,6 +8,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -385,7 +386,8 @@ namespace ReaStudio.Services
             Log.Write("[ai] chat prompt=" + r.PromptTokens + " completion=" + r.CompletionTokens
                       + " finish=" + r.Finish + " content=" + r.Content.Length + " reasoning=" + r.Reasoning.Length);
 
-            if (!string.IsNullOrWhiteSpace(r.Content)) return r.Content;
+            var body = JunkTagFilter.Sanitize(r.Content ?? "").Trim();
+            if (!string.IsNullOrWhiteSpace(body)) return body;
 
             // 正文为空且 finish=length：预算被思考链吃光，提高预算重试一次
             if (r.Finish == "length")
@@ -398,7 +400,8 @@ namespace ReaStudio.Services
                         var retry = await CallOnceAsync(msgs, retryBudget, ct).ConfigureAwait(false);
                         Log.Write("[ai] 空正文重试 prompt=" + retry.PromptTokens + " completion=" + retry.CompletionTokens
                                   + " finish=" + retry.Finish + " content=" + retry.Content.Length);
-                        if (!string.IsNullOrWhiteSpace(retry.Content)) return retry.Content;
+                        var retryBody = JunkTagFilter.Sanitize(retry.Content ?? "").Trim();
+                        if (!string.IsNullOrWhiteSpace(retryBody)) return retryBody;
                         if (string.IsNullOrWhiteSpace(r.Reasoning)) r = retry;
                     }
                     catch (Exception ex) { Log.Write("[ai] 空正文重试失败：" + ex.Message); }
@@ -497,11 +500,13 @@ namespace ReaStudio.Services
                       + "ms tps=" + Math.Round(stats.DecodeTps, 1));
 
             if (acc.Length == 0)
-                throw new InvalidOperationException("模型未返回正文（finish=" + stats.Finish + "，prompt=" + stats.PromptTokens
-                    + " tokens）。请重试，或在设置中调大“最大输出”后再次提问。");
+                throw new InvalidOperationException(stats.Finish == "ref-loop"
+                    ? "模型输出退化成了重复的引用标签，已自动中止本次生成。请重试，或更换参数更大的模型。"
+                    : "模型未返回正文（finish=" + stats.Finish + "，prompt=" + stats.PromptTokens
+                      + " tokens）。请重试，或在设置中调大“最大输出”后再次提问。");
 
             onProgress?.Invoke(stats);
-            return new ChatStreamResult { Content = acc.ToString().Trim(), Stats = stats };
+            return new ChatStreamResult { Content = JunkTagFilter.Sanitize(acc.ToString()).Trim(), Stats = stats };
         }
 
         private static async Task<ChatStats> StreamOnceAsync(List<ChatMsg> msgs, int maxTokens, StringBuilder acc,
@@ -555,6 +560,9 @@ namespace ReaStudio.Services
             using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
             using var reader = new StreamReader(stream, Encoding.UTF8);
             var filter = new ThinkFilter();
+            var junk = new JunkTagFilter();
+            var guard = new LoopGuard();
+            var broke = false;
 
             while (true)
             {
@@ -608,8 +616,22 @@ namespace ReaStudio.Services
 
                     var outText = filter.Feed(piece);
                     if (outText.Length == 0) continue;
-                    acc.Append(outText);
-                    onDelta?.Invoke(outText);
+
+                    // 退化保护：先看未清洗的增量，识别"卡死在重复吐标签"的情况并提前中止，
+                    // 否则会一路吐到 max_tokens 耗尽，既不产出结论又白等几十秒
+                    if (guard.Feed(outText))
+                    {
+                        stats.Finish = "ref-loop";
+                        Log.Write("[ai] 检测到伪引用标签重复退化，已中止本次生成");
+                        broke = true;
+                        break;
+                    }
+
+                    // 剔除模型自造的 <ref>/<citation> 之类伪引用标签，不占用输出预算
+                    var body = junk.Feed(outText);
+                    if (body.Length == 0) continue;
+                    acc.Append(body);
+                    onDelta?.Invoke(body);
 
                     // 实时统计节流推送，避免每个 token 都跨进程发消息
                     if (onProgress != null && swPush.ElapsedMilliseconds >= 100)
@@ -621,8 +643,21 @@ namespace ReaStudio.Services
                 }
             }
 
-            var tail = filter.Flush();
-            if (tail.Length > 0) { acc.Append(tail); onDelta?.Invoke(tail); }
+            if (!broke)
+            {
+                var tail = filter.Flush();
+                if (tail.Length > 0)
+                {
+                    var tailBody = junk.Feed(tail);
+                    if (tailBody.Length > 0) { acc.Append(tailBody); onDelta?.Invoke(tailBody); }
+                }
+            }
+
+            // 被截断的半个标签直接丢弃，只保留干净的正文尾巴
+            var junkTail = JunkTagFilter.Sanitize(junk.Flush());
+            var cut = junkTail.LastIndexOf('<');
+            if (cut >= 0 && junkTail.IndexOf('>', cut) < 0) junkTail = junkTail.Substring(0, cut);
+            if (junkTail.Trim().Length > 0) { acc.Append(junkTail); onDelta?.Invoke(junkTail); }
             if (firstTokenMs <= 0) firstTokenMs = swHead.Elapsed.TotalMilliseconds;
             FillLive(stats, acc.Length, firstTokenMs, swDecode, estimatedPrompt);
             return stats;
@@ -748,6 +783,91 @@ namespace ReaStudio.Services
                 var s = _buf;
                 _buf = "";
                 return _inThink ? "" : s;
+            }
+        }
+
+        /// <summary>
+        /// 剔除模型自造的伪引用标签（&lt;ref&gt;…&lt;/ref&gt;、&lt;citation&gt;、&lt;source&gt; 等）。
+        /// 采用白名单匹配，避免误伤 List&lt;int&gt;、&lt;T&gt; 这类泛型写法；前端 cleanAiText 用同一份白名单兜底。
+        /// </summary>
+        private sealed class JunkTagFilter
+        {
+            private const string Names =
+                "refs?|references?|citations?|cite[sd]?|sources?|evidences?|docs?|documents?|quotes?|contexts?|chunks?|snippets?|think(?:ing)?|analysis|tools?|tool_call|outputs?|results?";
+
+            private static readonly Regex Pair = new Regex(
+                @"<\s*(" + Names + @")\b[^>]*>[\s\S]*?<\s*/\s*\1\s*>",
+                RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+            private static readonly Regex Single = new Regex(
+                @"<\s*/?\s*(?:" + Names + @")\b[^>]*/?\s*>",
+                RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+            private string _buf = "";
+
+            public string Feed(string s)
+            {
+                _buf += s ?? "";
+                if (_buf.IndexOf('<') < 0)
+                {
+                    var plain = _buf;
+                    _buf = "";
+                    return plain;
+                }
+
+                // 半截标签要等下一段拼齐再判断，否则 <ref> 被劈成两半时清不干净
+                var lt = _buf.LastIndexOf('<');
+                if (_buf.IndexOf('>', lt) < 0 && _buf.Length - lt < 256)
+                {
+                    var head = _buf.Substring(0, lt);
+                    _buf = _buf.Substring(lt);
+                    return Sanitize(head);
+                }
+
+                var all = _buf;
+                _buf = "";
+                return Sanitize(all);
+            }
+
+            public string Flush()
+            {
+                var s = _buf;
+                _buf = "";
+                return s;
+            }
+
+            public static string Sanitize(string s)
+            {
+                if (string.IsNullOrEmpty(s) || s.IndexOf('<') < 0) return s;
+                s = Pair.Replace(s, "");
+                s = Single.Replace(s, "");
+                return s;
+            }
+        }
+
+        /// <summary>
+        /// 退化保护：小参数模型在长上下文中会卡死在重复吐同一批标签上，一路吐到 max_tokens 耗尽。
+        /// 这里按滑动窗口内的标签密度判定退化，命中即提前结束生成，把时间还给用户。
+        /// </summary>
+        private sealed class LoopGuard
+        {
+            private const int Window = 512;
+            private const int MaxHits = 8;
+
+            private static readonly Regex TagOpen = new Regex(
+                @"<\s*/?\s*(?:refs?|references?|citations?|cite[sd]?|sources?|evidences?|docs?|documents?|quotes?|contexts?|chunks?|snippets?)\b",
+                RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+            private readonly StringBuilder _win = new StringBuilder();
+            private int _feedCount;
+
+            public bool Feed(string s)
+            {
+                if (string.IsNullOrEmpty(s)) return false;
+                _win.Append(s);
+                if (_win.Length > Window) _win.Remove(0, _win.Length - Window);
+                if (++_feedCount % 6 != 0 || _win.Length < Window) return false;
+                return TagOpen.Matches(_win.ToString()).Count >= MaxHits;
             }
         }
 

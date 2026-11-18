@@ -7,7 +7,7 @@
 ![platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%207--11-0078d4)
 ![runtime](https://img.shields.io/badge/runtime-%E5%86%85%E5%B5%8C%C2%B7%E6%97%A0%E9%9C%80%E5%AE%89%E8%A3%85-2ea44f)
 ![model](https://img.shields.io/badge/built--in%20model-Qwen3.5--0.8B%20(Q4__K__M)-8957e5)
-![version](https://img.shields.io/badge/version-1.0.1-orange)
+![version](https://img.shields.io/badge/version-1.0.2-orange)
 
 ---
 
@@ -300,7 +300,8 @@ REA-Inverse/
 - 沙箱为**只读副本隔离**，不提供动态执行隔离；动态执行、进程树与行为链记录尚未实现；
 - 病毒内置规则与内置 CVE 库为随包快照，新威胁需自行导入规则或依赖在线情报；
 - 漏洞匹配依赖静态分析得到的技术指纹，无指纹的目标（加壳、混淆、自研格式）命中率有限；
-- 本地推理为纯 CPU，性能取决于机型。
+- 本地推理为纯 CPU，性能取决于机型；
+- 本地 Qwen3.5-0.8B 参数规模有限，长上下文下可能出现重复生成退化。界面已对 `<ref>` 一类伪引用标签做兜底清洗、退化时提前中止，但这只保证输出可读，不补救结论质量；重要研判建议换取更大参数模型或改用云端模型。
 
 **路线图**
 
@@ -337,6 +338,18 @@ REA-Inverse/
 ---
 
 ## 更新日志
+
+### v1.0.2
+
+- AI 对话改为真实流式：`ai.chat` 以 `stream=true` 读取 SSE 分片，正文增量经 `ai.delta` 事件逐段推入气泡，无需等待整段推理结束
+- 新增 `ai.stats` 实时统计：气泡下方两行 `Prefill` / `Decode`，展示耗时、token 数与 tok/s，生成过程中持续递增；结束后以 llama-server 返回的 `timings` 校准，云端模式读取 `usage`
+- 流式管道内以 `ThinkFilter` 剔除思考块，界面只呈现结论正文
+- 修复「AI 解读」正文被伪引用标签占满的问题：本地 Qwen3.5-0.8B 在长上下文下围绕 `<ref>` 自行编造引用结构并反复重复，而提示词从未规定该格式、前端又以纯文本渲染，标签原样显示并吃掉全部输出预算，直至触发 `max_tokens` 截断。现按四层处理：
+  - 提示词层：system 新增硬约束，禁止输出任何 XML/HTML 标签与 `<ref>`、`<citation>`、`<source>` 等引用标记，要求以「依据：证据标题」纯文本指明来源，并禁止重复同一句段；
+  - 宿主层新增 `JunkTagFilter`：按白名单（`ref` / `reference` / `citation` / `cite` / `source` / `evidence` / `doc` / `quote` / `context` / `chunk` / `snippet` / `think` / `analysis` / `tool` / `output` / `result` 等）剔除成对标签块与孤立标签，白名单匹配避免误伤 `List<int>`、`<T>` 这类泛型写法，被劈成两半的标签留到下一片拼齐再判断；普通对话与流式对话返回前均过一遍；
+  - 宿主层新增 `LoopGuard`：512 字符滑动窗口内伪引用标签出现 8 次即判定为重复生成退化，立即中止本次生成（`finish=ref-loop`），不再空耗到预算耗尽；中止后正文为空时，界面提示「模型输出退化成了重复的引用标签，已自动中止本次生成」，不再出现空白气泡；
+  - 前端新增 `cleanAiText()`：与宿主共用同一份白名单，流式增量与最终答案渲染前各清洗一次，并压缩标签删除后残留的空行，写入对话上下文的同样是清洗后正文；
+- 清洗后仍无有效正文时的提示口径同步调整，引导用户调大「设置 → 最大输出」或改用参数更大的模型
 
 ### v1.0.1
 

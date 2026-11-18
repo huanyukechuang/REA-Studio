@@ -514,7 +514,7 @@ function onEvent(name, data) {
     const s = state.chatStream;
     if (!s) return;
     s.acc += String((data && data.text) || '');
-    s.bubble.textContent = s.acc;
+    s.bubble.textContent = cleanAiText(s.acc) || '思考中…';
     autoScrollChat();
     return;
   }
@@ -1433,6 +1433,24 @@ async function aiExplain() {
   await sendChat();
 }
 
+/* ---------- AI 输出清洗 ----------
+   小参数模型在长上下文下容易退化成反复吐 <ref>/<citation> 之类的伪引用标签，
+   这些标签既无内容也无意义，还会吃光输出预算。这里按"引用类标签白名单"
+   做两层清洗：先删成对标签块，再删残留的孤立标签，最后压缩空行。
+   白名单方式可避免误伤 List<int>、<T> 这类泛型/占位符写法。 */
+const AI_JUNK_TAG = 'refs?|references?|citations?|cite[sd]?|sources?|evidences?|docs?|documents?|quotes?|contexts?|chunks?|snippets?|think(?:ing)?|analysis|tools?|tool_call|outputs?|results?';
+
+function cleanAiText(t) {
+  let s = String(t || '');
+  // 1) 成对标签块整段剔除（含内部内容）
+  s = s.replace(new RegExp('<\\s*(' + AI_JUNK_TAG + ')\\b[^>]*>[\\s\\S]*?<\\s*\\/\\s*\\1\\s*>', 'gi'), '');
+  // 2) 残留的孤立标签 / 自闭合标签
+  s = s.replace(new RegExp('<\\s*\\/?\\s*(?:' + AI_JUNK_TAG + ')\\b[^>]*\\/?\\s*>', 'gi'), '');
+  // 3) 清理标签删除后留下的空行与行尾空白
+  s = s.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/[ \t]{2,}/g, ' ').trim();
+  return s;
+}
+
 async function sendChat() {
   const box = $('#chatInput');
   const q = box.value.trim();
@@ -1460,7 +1478,9 @@ async function sendChat() {
   }, 120);
   state.chatStream = sess;
   const sys = '你是运行在本地桌面上的逆向分析助手，服务于安全研究人员。基于用户提供的 REA 静态分析证据作答，'
-    + '只依据证据推理，不确定时明确说明；输出简洁、分点、面向可执行结论，禁止编造证据中不存在的字段。';
+    + '只依据证据推理，不确定时明确说明；输出简洁、分点、面向可执行结论，禁止编造证据中不存在的字段。'
+    + '禁止输出任何 XML/HTML 标签，禁止使用 <ref>、<citation>、<source> 之类的引用标记；'
+    + '需要指明依据时写成「依据：证据标题」这样的纯文本，不要重复同一句话或同一段落。';
 
   const ctx = buildContext();
   // Qwen 系列 chat template 要求 system 必须且只能位于首条，证据上下文并入首条 system，禁止再追加第二条
@@ -1472,8 +1492,8 @@ async function sendChat() {
   try {
     const r = await invoke('ai.chat', { messages });
     const raw = sess.acc || (r && r.content) || '';
-    const answer = String(raw).trim();
-    bubble.textContent = answer || '本地模型没有产出正文（推理过程占满了输出上限）。请重试，或在“设置 → 最大输出”里调大数值后重新提问。';
+    const answer = cleanAiText(raw);
+    bubble.textContent = answer || '模型没有产出有效正文（只输出了无效引用标签或占满了输出上限）。请重试，或在“设置 → 最大输出”里调大数值后重新提问。';
     renderChatMeta(meta, (r && r.stats) || sess.stats || {});
     state.chat.push({ role: 'user', content: q });
     state.chat.push({ role: 'assistant', content: answer });
