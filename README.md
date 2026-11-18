@@ -1,7 +1,4 @@
-<p align="center">
-  <img src="src/ReaStudio/ui/assets/logo.png" width="320" alt="科创云·玄武 网络安全实验室">
-</p>
-REA Studio
+＃ REA Studio
 
 > 本地逆向分析与恶意样本研判工作台 — 离线优先，样本不出机<p>
 > 本项目已加入 <b>科创+开源计划</b><p>
