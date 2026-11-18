@@ -416,6 +416,341 @@ namespace ReaStudio.Services
                 + " tokens）。请重试，或在设置中调大“最大输出”后再次提问。");
         }
 
+        /// <summary>流式输出的实时统计：prefill（提示处理）与 decode（逐 token 生成）两段耗时与速率。</summary>
+        public sealed class ChatStats
+        {
+            public int PromptTokens { get; set; }
+            public int CompletionTokens { get; set; }
+            public double PrefillMs { get; set; }
+            public double DecodeMs { get; set; }
+            public string Finish { get; set; } = "";
+
+            public double PrefillTps { get { return PrefillMs > 0 ? PromptTokens / (PrefillMs / 1000.0) : 0; } }
+            public double DecodeTps { get { return DecodeMs > 0 ? CompletionTokens / (DecodeMs / 1000.0) : 0; } }
+
+            internal int ReasoningChars;
+            internal StringBuilder? ReasoningText;
+            internal bool TimingFromServer;
+        }
+
+        public sealed class ChatStreamResult
+        {
+            public string Content = "";
+            public ChatStats Stats = new ChatStats();
+        }
+
+        /// <summary>
+        /// 流式对话：正文增量通过 onDelta 实时回调，token 统计通过 onProgress 周期性回调
+        /// （结束时再回调一次完整数据）。空正文/上下文溢出等兜底逻辑与非流式 ChatAsync 保持一致。
+        /// </summary>
+        public static async Task<ChatStreamResult> ChatStreamAsync(
+            IEnumerable<ChatMsg> messages,
+            Action<string>? onDelta,
+            Action<ChatStats>? onProgress,
+            CancellationToken ct = default)
+        {
+            var msgs = NormalizeMessages(messages);
+            var budget = Settings.MaxTokens > 0 ? Settings.MaxTokens : 2048;
+            if (Settings.Mode != "cloud" && budget < 2048) budget = 2048;
+
+            var acc = new StringBuilder();
+            ChatStats stats;
+            try
+            {
+                stats = await StreamOnceAsync(msgs, budget, acc, onDelta, onProgress, ct).ConfigureAwait(false);
+            }
+            catch (InvalidOperationException ex) when (IsContextOverflow(ex.Message))
+            {
+                Log.Write("[ai] 提示超出上下文，裁剪证据后重试");
+                acc.Clear();
+                stats = await StreamOnceAsync(TrimForContext(msgs, 0.5), budget, acc, onDelta, onProgress, ct).ConfigureAwait(false);
+            }
+
+            // 正文为空且 finish=length：预算被思考链吃光，加大预算重试一次（此时前端累计正文仍为空，无重复内容）
+            if (acc.Length == 0 && stats.Finish == "length")
+            {
+                var retryBudget = Math.Min(6144, Math.Max(3072, budget * 2));
+                if (retryBudget > budget)
+                {
+                    try
+                    {
+                        var retry = await StreamOnceAsync(msgs, retryBudget, acc, onDelta, onProgress, ct).ConfigureAwait(false);
+                        Log.Write("[ai] 空正文重试 prompt=" + retry.PromptTokens + " completion=" + retry.CompletionTokens
+                                  + " finish=" + retry.Finish);
+                        stats = retry;
+                    }
+                    catch (Exception ex) { Log.Write("[ai] 空正文重试失败：" + ex.Message); }
+                }
+            }
+
+            // 仍然只有推理过程：一次性补发，绝不让前端停在空白气泡
+            if (acc.Length == 0 && stats.ReasoningText != null && stats.ReasoningText.Length > 0)
+            {
+                Log.Write("[ai] 正文为空，回退使用 reasoning_content");
+                var fallback = StripThinking(stats.ReasoningText.ToString());
+                if (fallback.Length > 0) { acc.Append(fallback); onDelta?.Invoke(fallback); }
+            }
+
+            Log.Write("[ai] chat-stream prompt=" + stats.PromptTokens + " completion=" + stats.CompletionTokens
+                      + " finish=" + stats.Finish + " content=" + acc.Length + " reasoning=" + stats.ReasoningChars
+                      + " prefill=" + (int)stats.PrefillMs + "ms decode=" + (int)stats.DecodeMs
+                      + "ms tps=" + Math.Round(stats.DecodeTps, 1));
+
+            if (acc.Length == 0)
+                throw new InvalidOperationException("模型未返回正文（finish=" + stats.Finish + "，prompt=" + stats.PromptTokens
+                    + " tokens）。请重试，或在设置中调大“最大输出”后再次提问。");
+
+            onProgress?.Invoke(stats);
+            return new ChatStreamResult { Content = acc.ToString().Trim(), Stats = stats };
+        }
+
+        private static async Task<ChatStats> StreamOnceAsync(List<ChatMsg> msgs, int maxTokens, StringBuilder acc,
+            Action<string>? onDelta, Action<ChatStats>? onProgress, CancellationToken ct)
+        {
+            var baseUrl = Settings.Mode == "cloud" ? Settings.CloudBaseUrl.TrimEnd('/') : LocalEndpoint;
+            var key = Settings.Mode == "cloud" ? Settings.CloudApiKey : "local";
+            var model = Settings.Mode == "cloud" ? Settings.CloudModel : Path.GetFileNameWithoutExtension(ResolveModelPath());
+
+            var payload = new Dictionary<string, object?>
+            {
+                ["model"] = string.IsNullOrEmpty(model) ? "local" : model,
+                ["messages"] = msgs,
+                ["temperature"] = Settings.Temperature,
+                ["stream"] = true,
+                ["max_tokens"] = maxTokens
+            };
+            if (Settings.Mode == "cloud")
+            {
+                // 云端流式默认不回 usage，需显式索要，否则只能退回字符估算
+                payload["stream_options"] = new Dictionary<string, object?> { ["include_usage"] = true };
+            }
+            else
+            {
+                // 本地 Qwen3.x 系列默认开"思考链"，会显著拖慢响应且污染报告正文，这里显式关闭
+                payload["chat_template_kwargs"] = new Dictionary<string, object?> { ["enable_thinking"] = false };
+            }
+
+            var stats = new ChatStats();
+            var estimatedPrompt = EstimateTokens(string.Join("\n", msgs.Select(m => m.Content ?? "")));
+            stats.PromptTokens = estimatedPrompt;
+
+            using var req = new HttpRequestMessage(HttpMethod.Post, baseUrl + "/chat/completions")
+            {
+                Content = JsonContent.Create(payload)
+            };
+            if (!string.IsNullOrEmpty(key)) req.Headers.TryAddWithoutValidation("Authorization", "Bearer " + key);
+
+            var swHead = Stopwatch.StartNew();      // 请求发出 → 首个正文增量 = prefill 段
+            var swDecode = new Stopwatch();         // 首 token → 结束 = decode 段
+            double firstTokenMs = 0;
+            var swPush = Stopwatch.StartNew();
+
+            using var resp = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var err = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                throw new InvalidOperationException("模型调用失败 HTTP " + (int)resp.StatusCode + ": " + Trunc(err, 400));
+            }
+
+            using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            var filter = new ThinkFilter();
+
+            while (true)
+            {
+                ct.ThrowIfCancellationRequested();
+                var line = await reader.ReadLineAsync().ConfigureAwait(false);
+                if (line == null) break;
+                line = line.Trim();
+                if (line.Length == 0) continue;
+                if (line.StartsWith("data:", StringComparison.Ordinal)) line = line.Substring(5).Trim();
+                if (line.Length == 0) continue;
+                if (line == "[DONE]") break;
+                if (line[0] != '{') continue;
+
+                JsonDocument doc;
+                try { doc = JsonDocument.Parse(line); }
+                catch { continue; }
+
+                using (doc)
+                {
+                    var root = doc.RootElement;
+                    // llama-server 在末尾 chunk 给出 timings；OpenAI 兼容云端给出 usage
+                    if (root.TryGetProperty("timings", out var timings)) FillTimings(stats, timings);
+                    if (root.TryGetProperty("usage", out var usage)) FillUsage(stats, usage);
+
+                    JsonElement choices;
+                    if (!root.TryGetProperty("choices", out choices) || choices.ValueKind != JsonValueKind.Array
+                        || choices.GetArrayLength() == 0) continue;
+
+                    var c0 = choices[0];
+                    JsonElement fr;
+                    if (c0.TryGetProperty("finish_reason", out fr) && fr.ValueKind == JsonValueKind.String)
+                    {
+                        var f = fr.GetString() ?? "";
+                        if (f.Length > 0) stats.Finish = f;
+                    }
+
+                    JsonElement delta;
+                    if (!c0.TryGetProperty("delta", out delta) || delta.ValueKind != JsonValueKind.Object) continue;
+
+                    var think = DeltaText(delta, "reasoning_content");
+                    if (think.Length > 0)
+                    {
+                        stats.ReasoningChars += think.Length;
+                        if (stats.ReasoningText == null) stats.ReasoningText = new StringBuilder();
+                        stats.ReasoningText.Append(think);
+                    }
+
+                    var piece = DeltaText(delta, "content");
+                    if (piece.Length == 0) continue;
+                    if (firstTokenMs <= 0) { firstTokenMs = swHead.Elapsed.TotalMilliseconds; swDecode.Start(); }
+
+                    var outText = filter.Feed(piece);
+                    if (outText.Length == 0) continue;
+                    acc.Append(outText);
+                    onDelta?.Invoke(outText);
+
+                    // 实时统计节流推送，避免每个 token 都跨进程发消息
+                    if (onProgress != null && swPush.ElapsedMilliseconds >= 100)
+                    {
+                        swPush.Restart();
+                        FillLive(stats, acc.Length, firstTokenMs, swDecode, estimatedPrompt);
+                        onProgress(stats);
+                    }
+                }
+            }
+
+            var tail = filter.Flush();
+            if (tail.Length > 0) { acc.Append(tail); onDelta?.Invoke(tail); }
+            if (firstTokenMs <= 0) firstTokenMs = swHead.Elapsed.TotalMilliseconds;
+            FillLive(stats, acc.Length, firstTokenMs, swDecode, estimatedPrompt);
+            return stats;
+        }
+
+        /// <summary>把本地实测耗时/估算 token 填进统计对象；服务端已给的可信值优先保留。</summary>
+        private static void FillLive(ChatStats s, int chars, double firstTokenMs, Stopwatch swDecode, int estPrompt)
+        {
+            // 服务端 timings 只在末尾 chunk 给出；在那之前用本地估算持续刷新，
+            // 否则首次赋值的 1 tok / 0.00 s 会一直冻结，界面上的实时 token 量就不再变化
+            if (s.TimingFromServer) return;
+            if (s.PromptTokens <= 0) s.PromptTokens = estPrompt;
+            if (s.PrefillMs <= 0) s.PrefillMs = firstTokenMs;
+            s.DecodeMs = Math.Max(s.DecodeMs, swDecode.Elapsed.TotalMilliseconds);
+            s.CompletionTokens = Math.Max(s.CompletionTokens, EstimateTokens(chars));
+        }
+
+        private static void FillTimings(ChatStats s, JsonElement t)
+        {
+            if (t.ValueKind != JsonValueKind.Object) return;
+            var pn = Num(t, "prompt_n");
+            var pm = Num(t, "prompt_ms");
+            var dn = Num(t, "predicted_n");
+            var dm = Num(t, "predicted_ms");
+            if (pn > 0) s.PromptTokens = (int)pn;
+            if (pm > 0) { s.PrefillMs = pm; s.TimingFromServer = true; }
+            if (dn > 0) s.CompletionTokens = (int)dn;
+            if (dm > 0) { s.DecodeMs = dm; s.TimingFromServer = true; }
+        }
+
+        private static void FillUsage(ChatStats s, JsonElement u)
+        {
+            if (u.ValueKind != JsonValueKind.Object) return;
+            var pt = Num(u, "prompt_tokens");
+            var ctk = Num(u, "completion_tokens");
+            if (pt > 0) s.PromptTokens = (int)pt;
+            if (ctk > 0) s.CompletionTokens = (int)ctk;
+        }
+
+        private static double Num(JsonElement e, string name)
+        {
+            JsonElement v;
+            if (!e.TryGetProperty(name, out v)) return 0;
+            if (v.ValueKind == JsonValueKind.Number) { double d; return v.TryGetDouble(out d) ? d : 0; }
+            return 0;
+        }
+
+        private static string DeltaText(JsonElement delta, string name)
+        {
+            JsonElement v;
+            if (!delta.TryGetProperty(name, out v) || v.ValueKind != JsonValueKind.String) return "";
+            return v.GetString() ?? "";
+        }
+
+        /// <summary>token 估算：CJK 约 1 字 1 token，其余按 4 字符 1 token；仅在服务端未给 usage 时兜底。</summary>
+        private static int EstimateTokens(string? s)
+        {
+            if (string.IsNullOrEmpty(s)) return 0;
+            var cjk = 0;
+            var other = 0;
+            foreach (var ch in s!)
+            {
+                if (ch >= 0x2E80) cjk++;
+                else other++;
+            }
+            return cjk + Math.Max(1, other / 4);
+        }
+
+        private static int EstimateTokens(int chars) => Math.Max(0, (int)Math.Round(chars / 1.8));
+
+        /// <summary>
+        /// 流式增量中剔除 &lt;think&gt; 思考块：标签可能被拆到相邻两个 chunk，
+        /// 故保留可能是标签前缀的尾巴，等下一段拼齐后再判断。
+        /// </summary>
+        private sealed class ThinkFilter
+        {
+            private const string Open = "<think>";
+            private const string Close = "</think>";
+            private string _buf = "";
+            private bool _inThink;
+
+            public string Feed(string s)
+            {
+                _buf += s ?? "";
+                var outp = new StringBuilder();
+                while (_buf.Length > 0)
+                {
+                    if (_inThink)
+                    {
+                        var idx = _buf.IndexOf(Close, StringComparison.OrdinalIgnoreCase);
+                        if (idx < 0)
+                        {
+                            // 保留尾部（可能是半个结束标签），其余思考内容丢弃
+                            if (_buf.Length > Close.Length) _buf = _buf.Substring(_buf.Length - Close.Length);
+                            return outp.ToString();
+                        }
+                        _buf = _buf.Substring(idx + Close.Length);
+                        _inThink = false;
+                        continue;
+                    }
+
+                    var start = _buf.IndexOf(Open, StringComparison.OrdinalIgnoreCase);
+                    if (start < 0)
+                    {
+                        var keep = 0;
+                        for (var k = Math.Min(Open.Length - 1, _buf.Length); k > 0; k--)
+                        {
+                            if (Open.StartsWith(_buf.Substring(_buf.Length - k), StringComparison.OrdinalIgnoreCase)) { keep = k; break; }
+                        }
+                        outp.Append(_buf, 0, _buf.Length - keep);
+                        _buf = _buf.Substring(_buf.Length - keep);
+                        return outp.ToString();
+                    }
+                    outp.Append(_buf, 0, start);
+                    _buf = _buf.Substring(start + Open.Length);
+                    _inThink = true;
+                }
+                return outp.ToString();
+            }
+
+            public string Flush()
+            {
+                var s = _buf;
+                _buf = "";
+                return _inThink ? "" : s;
+            }
+        }
+
         private static bool IsContextOverflow(string message)
         {
             if (string.IsNullOrEmpty(message)) return false;

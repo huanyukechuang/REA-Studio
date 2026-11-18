@@ -239,6 +239,15 @@ body{
 .bubble{background:var(--bg-layer);border:1px solid var(--stroke);border-radius:10px;padding:10px 13px;
   font-size:12.5px;line-height:1.65;max-width:min(760px,80%);white-space:pre-wrap;word-break:break-word}
 .chatmsg.me .bubble{background:rgba(96,205,255,.1);border-color:rgba(96,205,255,.25)}
+/* 流式气泡：正文 + 下方实时 token 统计（Prefill / Decode） */
+.bubblewrap{display:flex;flex-direction:column;gap:5px;max-width:min(760px,80%);min-width:0}
+.bubblewrap>.bubble{max-width:100%}
+.chatmsg.me .bubblewrap{align-items:flex-end}
+.bubmeta{display:none;flex-direction:column;gap:1px;font-size:10.5px;line-height:1.55;color:var(--text-2);
+  opacity:.9;font-variant-numeric:tabular-nums;user-select:text;padding-left:2px}
+.bubmeta.on{display:flex}
+.bubmeta .mrow{display:flex;gap:10px;white-space:nowrap}
+.bubmeta .mk{width:48px;color:var(--accent);opacity:.8}
 .composer{margin-top:14px}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
 .chip{border:1px solid var(--stroke);background:var(--bg-layer);color:var(--text-2);border-radius:20px;

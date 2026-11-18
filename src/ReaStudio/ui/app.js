@@ -510,6 +510,21 @@ function buildNode(value, depth, key) {
 
 /* ---------- 事件 ---------- */
 function onEvent(name, data) {
+  if (name === 'ai.delta') {
+    const s = state.chatStream;
+    if (!s) return;
+    s.acc += String((data && data.text) || '');
+    s.bubble.textContent = s.acc;
+    autoScrollChat();
+    return;
+  }
+  if (name === 'ai.stats') {
+    const s = state.chatStream;
+    if (!s) return;
+    s.stats = data || {};
+    renderChatMeta(s.meta, s.stats);
+    return;
+  }
   if (name === 'drop.hover') { dzHot(!!(data && data.on)); return; }
   if (name === 'drop.files') {
     dzHot(false);
@@ -744,10 +759,54 @@ $$('.chip').forEach(c => c.onclick = () => { $('#chatInput').value = c.dataset.q
 function addBubble(role, text) {
   const div = document.createElement('div');
   div.className = 'chatmsg ' + (role === 'user' ? 'me' : 'ai');
-  div.innerHTML = `<div class="avatar">${role === 'user' ? 'ME' : 'AI'}</div><div class="bubble">${esc(text)}</div>`;
+  div.innerHTML = `<div class="avatar">${role === 'user' ? 'ME' : 'AI'}</div><div class="bubblewrap"><div class="bubble">${esc(text)}</div></div>`;
   $('#chat').appendChild(div);
   $('#chat').scrollTop = $('#chat').scrollHeight;
   return div.querySelector('.bubble');
+}
+
+/* 流式输出：气泡下方的实时 token 统计（Prefill 预填 / Decode 生成） */
+function chatMetaEl(bubble) {
+  const wrap = bubble.parentElement;
+  let m = wrap.querySelector('.bubmeta');
+  if (!m) { m = document.createElement('div'); m.className = 'bubmeta'; wrap.appendChild(m); }
+  return m;
+}
+
+function fmtSec(ms) {
+  const s = Math.max(0, Number(ms) || 0) / 1000;
+  if (s >= 60) return (s / 60).toFixed(2) + ' min';
+  return s.toFixed(2) + ' s';
+}
+
+function fmtTps(v) {
+  const n = Number(v) || 0;
+  if (n >= 1000) return (n / 1000).toFixed(2) + 'k';
+  return n.toFixed(1);
+}
+
+function renderChatMeta(meta, st) {
+  if (!meta) return;
+  const o = st || {};
+  const pt = Number(o.promptTokens) || 0;
+  const ct2 = Number(o.completionTokens) || 0;
+  meta.classList.add('on');
+  meta.innerHTML =
+    '<div class="mrow"><span class="mk">Prefill</span>' +
+      '<span class="mv">' + fmtSec(o.prefillMs) + '</span>' +
+      '<span class="mv">' + pt + ' tok</span>' +
+      '<span class="mv">' + fmtTps(o.prefillTps) + ' tok/s</span></div>' +
+    '<div class="mrow"><span class="mk">Decode</span>' +
+      '<span class="mv">' + fmtSec(o.decodeMs) + '</span>' +
+      '<span class="mv">' + ct2 + ' tok</span>' +
+      '<span class="mv">' + fmtTps(o.decodeTps) + ' tok/s</span></div>';
+}
+
+function autoScrollChat() {
+  const chat = $('#chat');
+  if (!chat) return;
+  // 用户上滑查看历史时不打断阅读，仅在贴近底部时跟随
+  if (chat.scrollHeight - chat.scrollTop - chat.clientHeight < 120) chat.scrollTop = chat.scrollHeight;
 }
 
 function buildContext() {
@@ -1388,6 +1447,18 @@ async function sendChat() {
   }
 
   const bubble = addBubble('ai', '思考中…');
+  const meta = chatMetaEl(bubble);
+  const t0 = performance.now();
+  const sess = { bubble, meta, acc: '', stats: null, timer: null };
+  // 首 token 之前本地计时，让 Prefill 段也有实时观感；收到后端统计后改由真实数据接管
+  sess.timer = setInterval(() => {
+    if (sess.stats) return;
+    meta.classList.add('on');
+    meta.innerHTML =
+      '<div class="mrow"><span class="mk">Prefill</span><span class="mv">' + fmtSec(performance.now() - t0) + '</span><span class="mv">等待首 token…</span></div>'
+      + '<div class="mrow"><span class="mk">Decode</span><span class="mv">0.00 s</span><span class="mv">0 tok</span><span class="mv">0.0 tok/s</span></div>';
+  }, 120);
+  state.chatStream = sess;
   const sys = '你是运行在本地桌面上的逆向分析助手，服务于安全研究人员。基于用户提供的 REA 静态分析证据作答，'
     + '只依据证据推理，不确定时明确说明；输出简洁、分点、面向可执行结论，禁止编造证据中不存在的字段。';
 
@@ -1400,12 +1471,17 @@ async function sendChat() {
 
   try {
     const r = await invoke('ai.chat', { messages });
-    const answer = (r && r.content) ? String(r.content).trim() : '';
+    const raw = sess.acc || (r && r.content) || '';
+    const answer = String(raw).trim();
     bubble.textContent = answer || '本地模型没有产出正文（推理过程占满了输出上限）。请重试，或在“设置 → 最大输出”里调大数值后重新提问。';
+    renderChatMeta(meta, (r && r.stats) || sess.stats || {});
     state.chat.push({ role: 'user', content: q });
     state.chat.push({ role: 'assistant', content: answer });
   } catch (e) {
-    bubble.textContent = '调用失败：' + e.message;
+    bubble.textContent = (sess.acc ? sess.acc + '\n\n' : '') + '调用失败：' + e.message;
+  } finally {
+    clearInterval(sess.timer);
+    if (state.chatStream === sess) state.chatStream = null;
   }
   $('#chat').scrollTop = $('#chat').scrollHeight;
 }

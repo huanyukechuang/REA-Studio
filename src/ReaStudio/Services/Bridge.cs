@@ -223,9 +223,34 @@ namespace ReaStudio.Services
                                         Role = m.TryGetProperty("role", out var r) ? r.GetString() ?? "user" : "user",
                                         Content = m.TryGetProperty("content", out var c) ? c.GetString() ?? "" : ""
                                     });
-                            var answer = await AiService.ChatAsync(msgs).ConfigureAwait(false);
-                            Log.Write("[ai] chat ok len=" + (answer ?? "").Length);
-                            Reply(id, new { content = answer });
+                            // 流式：正文增量走 ai.delta，实时 token 统计走 ai.stats，结束后再回整体结果
+                            Action<string> onDelta = t => Event("ai.delta", new { text = t });
+                            Action<AiService.ChatStats> onStats = s => Event("ai.stats", new
+                            {
+                                promptTokens = s.PromptTokens,
+                                completionTokens = s.CompletionTokens,
+                                prefillMs = Math.Round(s.PrefillMs, 1),
+                                decodeMs = Math.Round(s.DecodeMs, 1),
+                                prefillTps = Math.Round(s.PrefillTps, 1),
+                                decodeTps = Math.Round(s.DecodeTps, 1),
+                                finish = s.Finish
+                            });
+                            var streamed = await AiService.ChatStreamAsync(msgs, onDelta, onStats).ConfigureAwait(false);
+                            Log.Write("[ai] chat ok len=" + (streamed.Content ?? "").Length);
+                            Reply(id, new
+                            {
+                                content = streamed.Content,
+                                stats = new
+                                {
+                                    promptTokens = streamed.Stats.PromptTokens,
+                                    completionTokens = streamed.Stats.CompletionTokens,
+                                    prefillMs = Math.Round(streamed.Stats.PrefillMs, 1),
+                                    decodeMs = Math.Round(streamed.Stats.DecodeMs, 1),
+                                    prefillTps = Math.Round(streamed.Stats.PrefillTps, 1),
+                                    decodeTps = Math.Round(streamed.Stats.DecodeTps, 1),
+                                    finish = streamed.Stats.Finish
+                                }
+                            });
                             break;
                         }
                     case "log.write":
