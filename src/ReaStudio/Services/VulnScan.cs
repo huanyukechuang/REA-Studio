@@ -57,6 +57,10 @@ namespace ReaStudio.Services
         public long ElapsedMs;
         public List<string> Notes = new();
         public string Summary = "";
+        // ——加壳/混淆增强：内层载荷复扫（提高加壳、混淆样本的 CVE 命中率）——
+        public string PackSummary = "";
+        public List<string> InnerPayloads = new();
+        public int InnerHits;
     }
 
     /// <summary>漏洞库中的一条 CVE 记录。Kind: ver=组件版本区间 / file=文件指纹 / str=利用特征 / name=仅组件名（在线库）。</summary>
@@ -1036,7 +1040,7 @@ namespace ReaStudio.Services
             return await Task.Run(() => ScanCore(path, log)).ConfigureAwait(false);
         }
 
-        private static VulnScanResult ScanCore(string path, Action<string>? log)
+        private static VulnScanResult ScanCore(string path, Action<string>? log, int depth = 0)
         {
             var sw = Stopwatch.StartNew();
             var res = new VulnScanResult { Path = path, DbVersion = Version, CveCount = AllRules().Count };
@@ -1181,6 +1185,48 @@ namespace ReaStudio.Services
                     }
                 }
 
+                // ——加壳/混淆增强：主样本被封装时，解包出内层载荷并用同一 CVE 库复扫——
+                if (depth == 0)
+                {
+                    try
+                    {
+                        var pack = PackFlow.Detect(scanPath);
+                        if (pack.Packed || pack.Obfuscated || !string.IsNullOrEmpty(pack.Installer))
+                        {
+                            res.PackSummary = pack.Summary;
+                            log?.Invoke("漏洞检测：检测到封装（" + pack.Packer + "），抽取内层载荷复扫…");
+                            var payloads = PackFlow.Unpack(scanPath, log);
+                            foreach (var pl in payloads)
+                            {
+                                res.InnerPayloads.Add(pl.Kind + " · " + pl.Name);
+                                VulnScanResult ir;
+                                try { ir = ScanCore(pl.Path, log, depth + 1); }
+                                catch (Exception ex) { res.Notes.Add("内层载荷 " + pl.Name + " 复扫失败：" + ex.Message); continue; }
+                                foreach (var c in ir.Components)
+                                {
+                                    if (comps.Any(x => SameComp(x.Name, c.Name) && x.Version == c.Version)) continue;
+                                    c.Evidence = "内层载荷 " + pl.Name + " · " + c.Evidence;
+                                    comps.Add(c);
+                                }
+                                int added = 0;
+                                foreach (var h in ir.Matches)
+                                {
+                                    if (!seen.Add("inner|" + pl.Name + "|" + h.CveId)) continue;
+                                    h.Component = h.Component + "（内层 " + pl.Name + "）";
+                                    h.Evidence = "内层载荷 " + pl.Name + " · " + h.Evidence;
+                                    hits.Add(h);
+                                    added++;
+                                }
+                                res.InnerHits += added;
+                                if (added > 0) log?.Invoke("内层载荷 " + pl.Name + " 命中 " + added + " 条 CVE 关联");
+                            }
+                            res.Notes.Add("加壳/混淆识别：" + pack.Summary +
+                                (payloads.Count > 0 ? "；已解包 " + payloads.Count + " 个内层载荷并复扫" : "；未能解出内层载荷（可能为强加密壳，建议结合动态分析）"));
+                        }
+                    }
+                    catch (Exception ex) { res.Notes.Add("内层载荷复扫失败：" + ex.Message); }
+                }
+
                 // 评分（待确认条目不参与评分，避免虚报）
                 int score = 0;
                 var counted = new Dictionary<string, int>();
@@ -1211,6 +1257,9 @@ namespace ReaStudio.Services
                     : res.Verdict + "：共命中 " + res.Matches.Count + " 条，" +
                       (top.Count > 0 ? "主要包括 " + string.Join("、", top) + "。" : "") +
                       " 建议按修复建议升级对应组件后复测。";
+
+                if (!string.IsNullOrEmpty(res.PackSummary)) res.Summary += "已识别封装：" + res.PackSummary + "。";
+                if (res.InnerHits > 0) res.Summary += "其中内层载荷复扫命中 " + res.InnerHits + " 条。";
 
                 res.Ok = true;
             }

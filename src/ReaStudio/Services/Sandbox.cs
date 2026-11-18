@@ -76,7 +76,21 @@ namespace ReaStudio.Services
         {
             lock (Sync)
             {
-                if (_current != null && string.Equals(_current.Scope, scope, StringComparison.OrdinalIgnoreCase)) return _current;
+                if (_current != null)
+                {
+                    // 同一会话内切换作业域只更新标签，不为每个作业面各开一个会话
+                    if (!_current.Scope.Split('+').Any(x => string.Equals(x, scope, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        _current.Scope = string.IsNullOrEmpty(_current.Scope) ? scope : _current.Scope + "+" + scope;
+                        try
+                        {
+                            File.WriteAllText(_current.MetaFile,
+                                "{\n  \"id\": \"" + _current.Id + "\",\n  \"scope\": \"" + _current.Scope + "\",\n  \"created\": \"" + _current.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss") + "\",\n  \"policy\": \"样本只读副本／网页内核数据独立／下载重定向／危险协议拦截／产出限本目录\"\n}\n");
+                        }
+                        catch { }
+                    }
+                    return _current;
+                }
                 return Rotate(scope);
             }
         }

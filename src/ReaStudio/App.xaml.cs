@@ -14,6 +14,11 @@ namespace ReaStudio
         {
             base.OnStartup(e);
             DispatcherUnhandledException += OnUnhandled;
+            // 启动后台清理：上一次动态执行若被强杀，会残留 REA-DynBlock- 前缀的防火墙出站阻断规则
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try { Services.DynNetGuard.CleanupStale(m => Services.Log.Write(m)); } catch { }
+            });
             AppDomain.CurrentDomain.UnhandledException += (s, ex) =>
             {
                 try

@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net.NetworkInformation;
 using System.Runtime.InteropServices;
 using System.Threading;
+using Microsoft.Win32;
 
 namespace ReaStudio.Services
 {
@@ -15,6 +16,7 @@ namespace ReaStudio.Services
         public class DynProc
         {
             public int Pid;
+            public int ParentPid;
             public string Name = "";
             public string FilePath = "";
             public string FirstSeen = "";
@@ -39,6 +41,7 @@ namespace ReaStudio.Services
         {
             public string Time = "";
             public string Path = "";
+            public string Change = "";
             public string Kind = "";
         }
 
@@ -50,6 +53,28 @@ namespace ReaStudio.Services
             public string Title = "";
             public string Detail = "";
             public bool Dangerous;
+        }
+
+        public class DynReg
+        {
+            public string Time = "";
+            public string Hive = "";
+            public string Key = "";
+            public string Name = "";
+            public string Data = "";
+            public string Change = "";
+            public bool Dangerous;
+            public string Note = "";
+        }
+
+        public class DynChain
+        {
+            public string Time = "";
+            public string Stage = "";
+            public string Subject = "";
+            public string Detail = "";
+            public string Attck = "";
+            public int Danger;
         }
 
         public class DynResult
@@ -66,11 +91,24 @@ namespace ReaStudio.Services
             public List<DynConn> Connections = new();
             public List<DynFile> Files = new();
             public List<DynEvent> Events = new();
+            public List<DynReg> Registry = new();
+            public List<DynChain> Chain = new();
+            public List<string> Rollback = new();
             public List<string> Notes = new();
             public int DangerousCount;
+            public string IsolationLevel = "";
+            public int IsolationLevelCode;
+            public string WorkDirectory = "";
+            public string SandboxSession = "";
+            public string Desktop = "";
+            public bool LowIntegrity;
+            public string Containment = "";
+            public bool NetBlocked;
+            public string NetBlockNote = "";
         }
 
         static IntPtr _job = IntPtr.Zero;
+        static DynIsolation.LaunchResult? _launch;
         static volatile bool _stop;
         static int _running;
 
@@ -79,6 +117,7 @@ namespace ReaStudio.Services
         public static void Stop()
         {
             _stop = true;
+            try { if (_launch != null) DynIsolation.Terminate(_launch); } catch { }
             try { if (_job != IntPtr.Zero) TerminateJobObject(_job, 1); } catch { }
         }
 
@@ -94,54 +133,83 @@ namespace ReaStudio.Services
             if (seconds <= 0) { r.Unlimited = true; sec = 0; }
             else sec = Math.Min(86400, Math.Max(1, seconds));
             r.DurationSec = sec;
-
             try { r.Sha256 = Sha256(path); } catch { }
 
-            // 运行前的目录快照（只做名称级 diff，避免深遍历拖慢启动）
+            // ① 样本入箱：动态执行只在沙箱执行区的副本上进行，原文件不触碰
+            SandboxSession? sess = null;
+            string staged = path;
+            try
+            {
+                sess = Sandbox.Begin("dyn");
+                var fi = new FileInfo(path);
+                if (fi.Length <= Sandbox.StageLimitBytes)
+                {
+                    var dst = Path.Combine(sess.Inbox, fi.Name);
+                    File.Copy(path, dst, true);
+                    staged = dst;
+                    Sandbox.Note(sess, "动态执行样本入箱：" + path + " -> inbox\\" + fi.Name);
+                }
+            }
+            catch (Exception ex) { Sandbox.Note("动态执行入箱失败：" + ex.Message); }
+
+            // ② 隔离等级与执行工作区（TEMP/APPDATA/HOME 全部重定向到 exec 工作区）
+            int level = DynIsolation.CurrentLevel();
+            var area = DynIsolation.Prepare(sess != null ? sess.Root : Path.GetTempPath(), staged,
+                level == DynIsolation.LevelRestricted);
+            r.IsolationLevelCode = level;
+            r.IsolationLevel = level == DynIsolation.LevelRestricted ? "L2 受限级" : "L1 受控级";
+            r.WorkDirectory = area.Root;
+            r.LowIntegrity = area.LowIntegrityAcl;
+            if (sess != null) r.SandboxSession = sess.Id;
+
+            // ③ 运行前快照：沙箱外目录 + 持久化注册表项
             var watchDirs = new List<string>();
             try { watchDirs.Add(Path.GetDirectoryName(Path.GetFullPath(path)) ?? ""); } catch { }
-            watchDirs.Add(Path.GetTempPath());
             watchDirs.Add(SafeEnv("TEMP"));
             watchDirs.Add(SafeEnv("APPDATA"));
             watchDirs.Add(SafeEnv("LOCALAPPDATA"));
             watchDirs.Add(SafeEnv("ProgramData"));
+            watchDirs.Add(Path.Combine(SafeEnv("APPDATA"), @"Microsoft\Windows\Start Menu\Programs\Startup"));
+            watchDirs.Add(Path.Combine(SafeEnv("ProgramData"), @"Microsoft\Windows\Start Menu\Programs\StartUp"));
             watchDirs = watchDirs.Where(d => !string.IsNullOrWhiteSpace(d) && Directory.Exists(d)).Distinct().ToList();
             var before = Snapshot(watchDirs);
+            var areaBefore = SnapshotDeep(new[] { area.Root }, 3, 6000);
+            var regBefore = RegSnapshot();
 
-            Process? proc = null;
+            // ④ 隔离启动：私有桌面 + 受限令牌/低完整性 + Job 约束（挂起创建后再入 Job，避免逃逸竞态）
+            // ④-a 网络隔离：管理员会话下为工作区可执行文件建立出站阻断，样本无法外联真实网络
+            bool netBlocked = false;
+            string netNote = "";
             try
             {
-                var psi = new ProcessStartInfo(path)
-                {
-                    UseShellExecute = false,
-                    WorkingDirectory = Path.GetDirectoryName(path) ?? Environment.CurrentDirectory
-                };
-                proc = Process.Start(psi);
-                if (proc == null) { r.Error = "样本启动失败"; return r; }
+                var tag = (r.Sha256.Length >= 8 ? r.Sha256.Substring(0, 8) : "sess") + "-" + DateTime.Now.ToString("HHmmss");
+                netBlocked = DynNetGuard.Enable(tag, area.Root, log, area.SamplePath);
+                netNote = DynNetGuard.Note;
             }
             catch (Exception ex)
             {
-                r.Error = "样本启动失败：" + ex.Message;
-                r.Notes.Add("样本未能启动，可能是权限、架构不匹配或被安全软件拦截。");
+                netNote = "网络隔离初始化失败：" + ex.Message;
+            }
+            r.NetBlocked = netBlocked;
+            r.NetBlockNote = netNote;
+            if (!netBlocked) r.Notes.Add(netNote);
+
+            var opt = new DynIsolation.Options();
+            var launch = DynIsolation.Launch(area.SamplePath, area, opt, log);
+            if (!launch.Ok)
+            {
+                r.Error = launch.Error;
+                foreach (var n in launch.Notes) r.Notes.Add(n);
+                try { DynNetGuard.Disable(log); } catch { }
                 return r;
             }
 
             _running = 1; _stop = false;
-            _job = CreateJobObject(IntPtr.Zero, null);
-            if (_job != IntPtr.Zero)
-            {
-                var ext = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
-                ext.BasicLimitInformation.LimitFlags = 0x2000; // KILL_ON_JOB_CLOSE
-                int len = Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
-                IntPtr p = Marshal.AllocHGlobal(len);
-                try
-                {
-                    Marshal.StructureToPtr(ext, p, false);
-                    SetInformationJobObject(_job, 9, p, len);
-                }
-                finally { Marshal.FreeHGlobal(p); }
-                try { AssignProcessToJobObject(_job, proc.Handle); } catch { }
-            }
+            _job = launch.Job;
+            _launch = launch;
+            r.Desktop = launch.DesktopName;
+            foreach (var n in launch.Notes) r.Notes.Add(n);
+            try { log?.Invoke("隔离等级：" + launch.IsolationName + "；执行区：" + area.Root); } catch { }
 
             long seq = 0;
             void Ev(string kind, string title, string detail, bool danger = false)
@@ -161,11 +229,14 @@ namespace ReaStudio.Services
 
             var seenPid = new HashSet<int>();
             var seenConn = new HashSet<string>();
+            var seenAreaFile = new HashSet<string>(areaBefore.Keys, StringComparer.OrdinalIgnoreCase);
             var procs = new Dictionary<int, DynProc>();
 
-            Ev("start", "启动样本 " + Path.GetFileName(path), path);
+            Ev("start", "启动样本 " + Path.GetFileName(path), path + "（副本：" + area.SamplePath + "）");
+            Ev("net-guard", netBlocked ? "网络出站已阻断" : "网络出站未阻断", netNote, !netBlocked);
             var sw = Stopwatch.StartNew();
             var lastScan = -1000;
+            var lastAreaScan = -1000;
             log?.Invoke(r.Unlimited
                 ? "观测时长：无限制（样本退出或点击停止结束）"
                 : "观测时长：" + sec + " 秒（" + (sec >= 3600 ? (sec / 3600.0).ToString("0.##") + " 小时" : sec >= 60 ? (sec / 60.0).ToString("0.##") + " 分钟" : sec + " 秒") + "）");
@@ -173,19 +244,25 @@ namespace ReaStudio.Services
             while ((r.Unlimited || sw.Elapsed.TotalSeconds < sec) && !_stop)
             {
                 Thread.Sleep(300);
-                try { proc.Refresh(); } catch { }
-                if (proc.HasExited && sw.Elapsed.TotalSeconds > 1.2) break;
+                var proc = launch.Process;
+                try { proc?.Refresh(); } catch { }
+                if (proc != null && proc.HasExited && sw.Elapsed.TotalSeconds > 1.2) break;
 
-                // 进程树
-                foreach (var pid in JobPids())
+                // 进程树（Job 内全部进程，含子进程）
+                var livePids = JobPids();
+                if (livePids.Count == 0 && launch.Pid > 0) livePids.Add(launch.Pid);
+                var parents = ParentMap();
+                foreach (var pid in livePids)
                 {
                     if (!seenPid.Add(pid)) continue;
                     try
                     {
                         var p = Process.GetProcessById(pid);
+                        parents.TryGetValue(pid, out var ppid);
                         var dp = new DynProc
                         {
                             Pid = pid,
+                            ParentPid = ppid,
                             Name = p.ProcessName,
                             FilePath = SafeMainModule(p),
                             FirstSeen = DateTime.Now.ToString("HH:mm:ss.fff"),
@@ -193,7 +270,7 @@ namespace ReaStudio.Services
                         };
                         procs[pid] = dp;
                         r.Processes.Add(dp);
-                        Ev("proc", "创建进程 " + dp.Name + " (PID " + pid + ")", dp.FilePath);
+                        Ev("proc", "创建进程 " + dp.Name + " (PID " + pid + ")", dp.FilePath + (ppid > 0 ? " · 父进程 " + ppid : ""));
                     }
                     catch { }
                 }
@@ -202,7 +279,7 @@ namespace ReaStudio.Services
                 if (sw.ElapsedMilliseconds - lastScan >= 600)
                 {
                     lastScan = (int)sw.ElapsedMilliseconds;
-                    var pids = JobPids();
+                    var pids = livePids;
                     if (pids.Count == 0) continue;
                     RefreshPortMap();
                     foreach (var c in TcpConns())
@@ -228,30 +305,273 @@ namespace ReaStudio.Services
                         Ev("net", dc.Proto + " 外联 " + dc.Remote, name + (string.IsNullOrEmpty(note) ? "" : " · " + note), dc.Dangerous);
                     }
                 }
+
+                // 沙箱执行区实时落盘（样本写 TEMP/APPDATA 落在 exec 工作区，可即时观察）
+                if (sw.ElapsedMilliseconds - lastAreaScan >= 1500)
+                {
+                    lastAreaScan = (int)sw.ElapsedMilliseconds;
+                    var nowArea = SnapshotDeep(new[] { area.Root }, 3, 6000);
+                    foreach (var kv in nowArea)
+                    {
+                        if (!seenAreaFile.Add(kv.Key)) continue;
+                        var kind = JudgeFile(kv.Key);
+                        r.Files.Add(new DynFile { Time = DateTime.Now.ToString("HH:mm:ss"), Path = kv.Key, Change = "新增", Kind = kind.Length > 0 ? kind : "沙箱内落盘" });
+                        Ev("file", "新增文件 " + Path.GetFileName(kv.Key), kv.Key + (kind.Length > 0 ? " · " + kind : ""), kind.Contains("自启动") || kind.Contains("服务"));
+                    }
+                }
             }
 
-            try { if (!proc.HasExited) TerminateJobObject(_job, 1); } catch { }
-            try { proc.WaitForExit(1500); } catch { }
-            Ev("stop", "观测结束", "样本进程已终止（实际观测 " + sw.Elapsed.TotalSeconds.ToString("0.0") + " 秒）");
+            // ⑤ 收尾：终止作业内全部进程，关闭私有桌面句柄
+            var elapsed = sw.Elapsed.TotalSeconds;
+            DynIsolation.Terminate(launch);
+            try { launch.Process?.WaitForExit(1500); } catch { }
+            Ev("stop", "观测结束", "样本及子进程已终止（实际观测 " + elapsed.ToString("0.0") + " 秒）");
             _running = 0;
             try { if (_job != IntPtr.Zero) CloseHandle(_job); } catch { }
             _job = IntPtr.Zero;
+            DynIsolation.Release(launch);
+            _launch = null;
+            try { DynNetGuard.Disable(log); } catch { }
 
-            // 落盘行为
+            // ⑥ 沙箱外落盘（目录 diff）
             var after = Snapshot(watchDirs);
-            foreach (var f in after.Keys.Where(k => !before.ContainsKey(k)).Take(400))
+            var seenOut = new HashSet<string>(r.Files.Select(f => f.Path), StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in after)
             {
-                var kind = JudgeFile(f);
-                r.Files.Add(new DynFile { Time = DateTime.Now.ToString("HH:mm:ss"), Path = f, Kind = kind });
-                Ev("file", "新增文件 " + Path.GetFileName(f), f + (kind.Length > 0 ? " · " + kind : ""), kind.Contains("自启动") || kind.Contains("服务"));
+                string change = "";
+                if (!before.TryGetValue(kv.Key, out var oldSize)) change = "新增";
+                else if (oldSize != kv.Value) change = "修改";
+                else continue;
+                if (!seenOut.Add(kv.Key)) continue;
+                if (r.Files.Count >= 600) break;
+                var kind = JudgeFile(kv.Key);
+                r.Files.Add(new DynFile { Time = DateTime.Now.ToString("HH:mm:ss"), Path = kv.Key, Change = change, Kind = kind });
+                Ev("file", change + "文件 " + Path.GetFileName(kv.Key), kv.Key + (kind.Length > 0 ? " · " + kind : ""), kind.Contains("自启动") || kind.Contains("服务"));
             }
+            foreach (var f in r.Files.Where(f => !IsInside(area.Root, f.Path))) r.Rollback.Add(f.Path);
 
+            // ⑦ 注册表持久化 diff
+            try
+            {
+                var regAfter = RegSnapshot();
+                foreach (var kv in regAfter)
+                {
+                    if (!regBefore.TryGetValue(kv.Key, out var oldVal))
+                        AddReg(r, "新增", kv.Key, kv.Value, Ev);
+                    else if (!string.Equals(oldVal, kv.Value, StringComparison.OrdinalIgnoreCase))
+                        AddReg(r, "修改", kv.Key, kv.Value, Ev);
+                }
+                foreach (var kv in regBefore.Where(kv => !regAfter.ContainsKey(kv.Key)))
+                    AddReg(r, "删除", kv.Key, kv.Value, Ev);
+            }
+            catch (Exception ex) { r.Notes.Add("注册表快照失败：" + ex.Message); }
+
+            // ⑧ 行为链与判定
+            r.Chain = BuildChain(r);
             r.Ok = true;
             r.Verdict = BuildVerdict(r);
-            r.Notes.Add("动态分析在作业对象约束下运行，观测结束会强制终止样本及其子进程。");
-            r.Notes.Add("未使用内核驱动与 API HOOK，行为采集基于进程/连接/目录快照，可能漏采极短命进程。");
+            r.Containment = (level == DynIsolation.LevelRestricted
+                ? "受限令牌 + 低完整性 + 私有桌面 + 作业对象约束，样本运行在沙箱 exec 工作区"
+                : "私有桌面 + 环境重定向 + 作业对象约束，样本运行在沙箱 exec 工作区")
+                + (r.NetBlocked ? "；出站网络已在防火墙层阻断" : "；出站网络未阻断（仅观测）");
+            if (r.NetBlocked)
+                r.Notes.Add("网络隔离已生效：" + r.NetBlockNote + "。规则按可执行文件路径匹配，样本若将自身复制到工作区外运行则不受该规则约束，需结合进程树与落盘记录核对。");
+            else if (!string.IsNullOrEmpty(r.NetBlockNote))
+                r.Notes.Add("网络隔离未生效：" + r.NetBlockNote + "。本次为仅观测模式，样本可外联真实网络，建议配合断网/离线环境使用。");
+            r.Notes.Add("动态执行使用独立工作区：" + area.Root + "，样本的 TEMP/APPDATA/USERPROFILE 已重定向，界面运行在私有桌面。");
+            r.Notes.Add("作业对象约束进程数上限 " + opt.MaxProcesses + "，单进程内存上限 " + opt.ProcessMemoryMb + " MB，观测结束整树终止。");
+            r.Notes.Add("未使用内核驱动与 API HOOK，行为采集基于进程/连接/目录/注册表快照，可能漏采极短命进程；注册表仅覆盖常见持久化项。");
+            if (r.Rollback.Count > 0)
+                r.Notes.Add("有 " + r.Rollback.Count + " 个文件落在沙箱执行区之外的宿主目录，已列入回滚清单，需在报告中确认后清理。");
             if (r.Connections.Any(c => c.Proto == "UDP")) r.Notes.Add("已包含 UDP 监听端点，UDP 无连接会话无法完整还原。");
             return r;
+        }
+
+        static void AddReg(DynResult r, string change, string key, string data, Action<string, string, string, bool> ev)
+        {
+            ParseRegKey(key, out var hive, out var path, out var name);
+            bool persist = IsPersistenceKey(path);
+            var dr = new DynReg
+            {
+                Time = DateTime.Now.ToString("HH:mm:ss"),
+                Hive = hive,
+                Key = path,
+                Name = name,
+                Data = data,
+                Change = change,
+                Dangerous = persist && change != "删除",
+                Note = persist ? "持久化位置变更" : ""
+            };
+            r.Registry.Add(dr);
+            ev("reg", change + "注册表项 " + name, hive + "\\" + path + " = " + data, dr.Dangerous);
+        }
+
+        static void ParseRegKey(string key, out string hive, out string path, out string name)
+        {
+            hive = "";
+            path = "";
+            name = "";
+            try
+            {
+                int bar = key.IndexOf('|');
+                var left = bar > 0 ? key.Substring(0, bar) : key;
+                name = bar > 0 ? key.Substring(bar + 1) : "";
+                int sp = left.IndexOf('\\');
+                hive = sp > 0 ? left.Substring(0, sp) : left;
+                path = sp > 0 ? left.Substring(sp + 1) : "";
+            }
+            catch { }
+        }
+
+        static bool IsPersistenceKey(string path)
+        {
+            var l = (path ?? "").ToLowerInvariant();
+            return l.Contains("\\currentversion\\run") || l.Contains("winlogon") || l.Contains("services\\")
+                || l.Contains("image file execution options") || l.Contains("session manager") || l.Contains("policies\\explorer\\run");
+        }
+
+        static bool IsInside(string root, string path)
+        {
+            try
+            {
+                var a = Path.GetFullPath(root).TrimEnd('\\') + "\\";
+                var b = Path.GetFullPath(path);
+                return b.StartsWith(a, StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }
+
+        static readonly (string Hive, string Path)[] RegKeys = new (string, string)[]
+        {
+            ("HKCU", @"Software\Microsoft\Windows\CurrentVersion\Run"),
+            ("HKCU", @"Software\Microsoft\Windows\CurrentVersion\RunOnce"),
+            ("HKCU", @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run"),
+            ("HKCU", @"Software\Microsoft\Windows NT\CurrentVersion\Windows"),
+            ("HKLM", @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"),
+            ("HKLM", @"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce"),
+            ("HKLM", @"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Run"),
+            ("HKLM", @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"),
+            ("HKLM", @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"),
+            ("HKLM", @"SYSTEM\CurrentControlSet\Control\Session Manager"),
+        };
+
+        /// <summary>持久化位置快照：值名+数据，服务项只记录子键名（服务安装痕迹）。</summary>
+        static Dictionary<string, string> RegSnapshot()
+        {
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (hive, path) in RegKeys)
+            {
+                try
+                {
+                    var baseKey = hive == "HKCU" ? Registry.CurrentUser : Registry.LocalMachine;
+                    using var key = baseKey.OpenSubKey(path);
+                    if (key == null) continue;
+                    foreach (var name in key.GetValueNames())
+                    {
+                        string val;
+                        try { val = Convert.ToString(key.GetValue(name)) ?? ""; } catch { val = ""; }
+                        map[hive + "\\" + path + "|" + name] = val;
+                    }
+                }
+                catch { }
+            }
+            try
+            {
+                using var svc = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services");
+                if (svc != null)
+                {
+                    foreach (var sub in svc.GetSubKeyNames().Take(4000))
+                        map["HKLM\\SYSTEM\\CurrentControlSet\\Services|" + sub] = "service";
+                }
+            }
+            catch { }
+            return map;
+        }
+
+        static Dictionary<string, long> SnapshotDeep(IEnumerable<string> dirs, int maxDepth, int maxFiles)
+        {
+            var map = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            foreach (var d in dirs) Walk(d, 0, maxDepth, map, maxFiles);
+            return map;
+        }
+
+        static void Walk(string dir, int depth, int maxDepth, Dictionary<string, long> map, int maxFiles)
+        {
+            if (depth > maxDepth || map.Count >= maxFiles) return;
+            try
+            {
+                foreach (var f in Directory.EnumerateFiles(dir))
+                {
+                    if (map.Count >= maxFiles) return;
+                    try { map[f] = new FileInfo(f).Length; } catch { }
+                }
+                foreach (var s in Directory.EnumerateDirectories(dir))
+                {
+                    if (map.Count >= maxFiles) return;
+                    Walk(s, depth + 1, maxDepth, map, maxFiles);
+                }
+            }
+            catch { }
+        }
+
+        static Dictionary<int, int> ParentMap()
+        {
+            var map = new Dictionary<int, int>();
+            IntPtr snap = CreateToolhelp32Snapshot(0x2, 0);
+            if (snap == IntPtr.Zero || snap == (IntPtr)(-1)) return map;
+            try
+            {
+                var pe = new PROCESSENTRY32 { dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32)) };
+                if (Process32First(snap, ref pe))
+                {
+                    do { map[(int)pe.th32ProcessID] = (int)pe.th32ParentProcessID; }
+                    while (Process32Next(snap, ref pe));
+                }
+            }
+            catch { }
+            finally { CloseHandle(snap); }
+            return map;
+        }
+
+        static List<DynChain> BuildChain(DynResult r)
+        {
+            var list = new List<DynChain>();
+            foreach (var e in r.Events)
+            {
+                string stage;
+                string attck;
+                switch (e.Kind)
+                {
+                    case "start": stage = "执行"; attck = "T1204 用户执行"; break;
+                    case "proc": stage = "子进程"; attck = "T1106 原生 API 调用"; break;
+                    case "net": stage = "外联"; attck = "T1071 应用层协议"; break;
+                    case "file": stage = "落盘"; attck = StageAttck(e.Detail); break;
+                    case "reg": stage = "持久化"; attck = "T1547.001 注册表自启动"; break;
+                    default: stage = "结束"; attck = ""; break;
+                }
+                list.Add(new DynChain
+                {
+                    Time = e.Time,
+                    Stage = stage,
+                    Subject = e.Title,
+                    Detail = e.Detail,
+                    Attck = attck,
+                    Danger = e.Dangerous ? 70 : 20
+                });
+                if (list.Count >= 800) break;
+            }
+            return list;
+        }
+
+        static string StageAttck(string detail)
+        {
+            var l = (detail ?? "").ToLowerInvariant();
+            if (l.Contains("自启动")) return "T1547 启动项";
+            if (l.Contains("计划任务")) return "T1053.005 计划任务";
+            if (l.Contains("脚本")) return "T1059 命令与脚本";
+            if (l.EndsWith(".exe") || l.Contains(".exe ·")) return "T1105 载荷投递";
+            if (l.EndsWith(".dll") || l.Contains(".dll ·")) return "T1129 共享模块";
+            return "T1105 载荷投递";
         }
 
         static string BuildVerdict(DynResult r)
@@ -470,6 +790,31 @@ namespace ReaStudio.Services
 
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern bool CloseHandle(IntPtr hObject);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct PROCESSENTRY32
+        {
+            public uint dwSize;
+            public uint cntUsage;
+            public uint th32ProcessID;
+            public IntPtr th32DefaultHeapID;
+            public uint th32ModuleID;
+            public uint cntThreads;
+            public uint th32ParentProcessID;
+            public int pcPriClassBase;
+            public uint dwFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string szExeFile;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern bool Process32First(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern bool Process32Next(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
 
         [StructLayout(LayoutKind.Sequential)]
         struct JOBOBJECT_BASIC_LIMIT_INFORMATION

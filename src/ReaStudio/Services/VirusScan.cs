@@ -47,6 +47,22 @@ namespace ReaStudio.Services
         public long ElapsedMs;
         public List<string> Notes = new();
         public string Summary = "";
+        // ——加壳/混淆识别与内层解包（提高加壳、混淆样本命中率）——
+        public bool Packed;
+        public string Packer = "";
+        public string PackerConfidence = "";
+        public bool Obfuscated;
+        public string ObfuscationKind = "";
+        public double PackMaxEntropy;
+        public long Overlay;
+        public string WeakSign = "";
+        public string Installer = "";
+        public string PackSummary = "";
+        public List<string> PackEvidence = new();
+        public List<string> PackSections = new();
+        public List<string> InnerPayloads = new();
+        public int InnerHits;
+        public int ScoreBonus;
     }
 
     /// <summary>病毒库中的一条哈希记录。</summary>
@@ -845,6 +861,82 @@ namespace ReaStudio.Services
 
         // ————————————————————— 检测引擎 —————————————————————
         /// <summary>
+        /// 对单份字节流执行规则匹配。主样本与解包出来的内层载荷共用同一套规则，
+        /// 保证加壳/混淆样本在其明文载荷上仍能被命中。
+        /// </summary>
+        private static List<VirusHit> MatchRules(byte[] buf, HashSet<string> pe, List<VirusRule> rules, string? source)
+        {
+            var hits = new List<VirusHit>();
+            if (buf.Length == 0) return hits;
+            var latin = Encoding.Latin1.GetString(buf);
+            var uni = buf.Length > 1 ? Encoding.Unicode.GetString(buf) : "";
+            foreach (var rule in rules)
+            {
+                if (string.IsNullOrEmpty(rule.Pattern)) continue;
+                string? matched = null;
+                switch (rule.Kind)
+                {
+                    case "pe":
+                        if (pe.Contains(rule.Pattern)) matched = PeText(rule.Pattern);
+                        break;
+                    case "all":
+                        {
+                            var parts = rule.Pattern.Split('|');
+                            if (parts.Length > 0 && parts.All(p => FindText(latin, uni, p) != null))
+                                matched = parts[0];
+                            break;
+                        }
+                    case "hex":
+                        {
+                            var off = FindHex(buf, rule.Pattern);
+                            if (off >= 0) matched = "偏移 0x" + off.ToString("X");
+                            break;
+                        }
+                    case "regex":
+                        try
+                        {
+                            var m = Regex.Match(latin, rule.Pattern, RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(400));
+                            if (m.Success) matched = Snip(m.Value);
+                        }
+                        catch { }
+                        break;
+                    default:
+                        matched = FindText(latin, uni, rule.Pattern);
+                        break;
+                }
+                if (matched == null) continue;
+                hits.Add(new VirusHit
+                {
+                    RuleId = rule.Id, Name = rule.Name, Family = rule.Family, Type = rule.Type,
+                    Severity = rule.Severity, Match = matched, Desc = rule.Desc,
+                    Source = source ?? (rule.Builtin ? "内置规则" : "导入规则")
+                });
+            }
+            return hits;
+        }
+
+        /// <summary>读取文件的检测窗口（不超过 max 字节）。</summary>
+        private static byte[] ReadWindow(string path, int max)
+        {
+            try
+            {
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1 << 20, false);
+                int window = (int)Math.Min(fs.Length, max);
+                var buf = new byte[window];
+                int read = 0;
+                while (read < window)
+                {
+                    int n = fs.Read(buf, read, window - read);
+                    if (n <= 0) break;
+                    read += n;
+                }
+                if (read < window) Array.Resize(ref buf, read);
+                return buf;
+            }
+            catch { return Array.Empty<byte>(); }
+        }
+
+        /// <summary>
         /// 在沙箱内对样本副本执行检测：哈希比对 + 规则匹配 + PE 结构检查。样本不被执行。
         /// </summary>
         public static async Task<VirusScanResult> ScanAsync(string path, Action<string>? log = null)
@@ -924,50 +1016,82 @@ namespace ReaStudio.Services
                 res.PeInfo = pe.Count == 0 ? "非 PE 文件" : string.Join(" / ", pe.Where(k => !k.StartsWith("_")).Select(k => PeText(k)));
                 if (buf.Length < fi.Length) res.Notes.Add("样本较大，仅对前 " + (MaxScanBytes / 1048576) + " MB 做内容匹配，指纹为全文件计算");
 
-                var latin = Encoding.Latin1.GetString(buf);
-                var uni = buf.Length > 1 ? Encoding.Unicode.GetString(buf) : "";
                 log?.Invoke("病毒检测：规则匹配（" + AllRules().Count + " 条规则）…");
+                var rules = AllRules();
+                hits.AddRange(MatchRules(buf, pe, rules, null));
 
-                foreach (var rule in AllRules())
+                // ——加壳/混淆增强：识别封装类型，抽取内层载荷复扫，恢复被压缩或加密掩盖的特征命中——
+                try
                 {
-                    if (string.IsNullOrEmpty(rule.Pattern)) continue;
-                    string? matched = null;
-                    switch (rule.Kind)
+                    var pack = PackFlow.Detect(scanPath);
+                    res.Packed = pack.Packed;
+                    res.Packer = pack.Packer;
+                    res.PackerConfidence = pack.Confidence;
+                    res.Obfuscated = pack.Obfuscated;
+                    res.ObfuscationKind = pack.ObfuscationKind;
+                    res.PackMaxEntropy = pack.MaxEntropy;
+                    res.Overlay = pack.Overlay;
+                    res.WeakSign = pack.WeakSign;
+                    res.Installer = pack.Installer;
+                    res.PackSummary = pack.Summary;
+                    res.PackEvidence = pack.Evidence;
+                    res.PackSections = pack.Sections;
+                    res.Notes.Add("加壳/混淆识别：" + pack.Summary);
+                    if (pack.Evidence.Count > 0) res.Notes.Add("判定依据：" + string.Join("；", pack.Evidence.Take(6)));
+                    if (!string.IsNullOrEmpty(pack.WeakSign)) res.Notes.Add("弱指纹（区段结构聚类，不依赖字节哈希）：" + pack.WeakSign);
+
+                    if (pack.Packed || pack.Obfuscated || !string.IsNullOrEmpty(pack.Installer))
                     {
-                        case "pe":
-                            if (pe.Contains(rule.Pattern)) matched = PeText(rule.Pattern);
-                            break;
-                        case "all":
-                            {
-                                var parts = rule.Pattern.Split('|');
-                                if (parts.Length > 0 && parts.All(p => FindText(latin, uni, p) != null))
-                                    matched = parts[0];
-                                break;
-                            }
-                        case "hex":
-                            {
-                                var off = FindHex(buf, rule.Pattern);
-                                if (off >= 0) matched = "偏移 0x" + off.ToString("X");
-                                break;
-                            }
-                        case "regex":
+                        log?.Invoke("病毒检测：检测到封装，尝试抽取内层载荷复扫…");
+                        var payloads = PackFlow.Unpack(scanPath, log);
+                        foreach (var pl in payloads) res.InnerPayloads.Add(pl.Kind + " · " + pl.Name + "（" + pl.Size + " 字节）");
+                        int bonus = 0;
+                        bool innerMal = false;
+                        foreach (var pl in payloads)
+                        {
+                            var ib = ReadWindow(pl.Path, MaxScanBytes);
+                            if (ib.Length == 0) continue;
+                            var ipe = ReadPe(ib);
+                            var ihits = MatchRules(ib, ipe, rules, "内层：" + pl.Name);
                             try
                             {
-                                var m = Regex.Match(latin, rule.Pattern, RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(400));
-                                if (m.Success) matched = Snip(m.Value);
+                                using var h = SHA256.Create();
+                                var isha = Convert.ToHexString(h.ComputeHash(ib)).ToUpperInvariant();
+                                if (idx.TryGetValue(isha, out var irec))
+                                    ihits.Add(new VirusHit
+                                    {
+                                        RuleId = "hash", Name = irec.Name, Family = irec.Name, Type = irec.Type,
+                                        Severity = irec.Severity, Match = irec.Hash,
+                                        Desc = "内层载荷命中病毒库指纹（来源：" + irec.Source + "）",
+                                        Source = "内层哈希库：" + pl.Name
+                                    });
                             }
                             catch { }
-                            break;
-                        default:
-                            matched = FindText(latin, uni, rule.Pattern);
-                            break;
+                            if (ihits.Count == 0) continue;
+                            res.InnerHits += ihits.Count;
+                            foreach (var h in ihits)
+                            {
+                                bonus += h.Severity == "高" ? 40 : h.Severity == "中" ? 18 : 8;
+                                if (h.Severity == "高") innerMal = true;
+                            }
+                            hits.AddRange(ihits);
+                        }
+                        if (res.InnerHits > 0)
+                        {
+                            res.Notes.Add("内层载荷复扫命中 " + res.InnerHits + " 条特征，已按加壳补偿计入评分");
+                            if (innerMal) res.Notes.Add("内层载荷命中高危特征，加壳未能掩盖实际载荷行为");
+                        }
+                        else if (payloads.Count > 0)
+                        {
+                            res.Notes.Add("已抽取 " + payloads.Count + " 个内层载荷，复扫未见规则命中（可能为强加密壳或自定义封装，建议结合动态分析）");
+                        }
+                        res.ScoreBonus = Math.Min(bonus, 60);
+                        if (innerMal) res.ScoreBonus = Math.Max(res.ScoreBonus, 60);
                     }
-                    if (matched == null) continue;
-                    hits.Add(new VirusHit
-                    {
-                        RuleId = rule.Id, Name = rule.Name, Family = rule.Family, Type = rule.Type,
-                        Severity = rule.Severity, Match = matched, Desc = rule.Desc, Source = rule.Builtin ? "内置规则" : "导入规则"
-                    });
+                }
+                catch (Exception ex)
+                {
+                    res.Notes.Add("加壳增强分析失败：" + ex.Message);
                 }
 
                 // 评分：高危 34 / 中危 16 / 低危 6，同类封顶，哈希命中直接判定恶意
@@ -999,6 +1123,8 @@ namespace ReaStudio.Services
                     : res.Verdict == "可疑"
                         ? "判定为可疑：命中 " + res.Medium + " 项中危、" + res.Low + " 项低危特征，建议结合动态分析复核"
                         : "病毒库比对未见命中（无签名与行为特征匹配）";
+                if (!string.IsNullOrEmpty(res.PackSummary)) res.Summary += "；" + res.PackSummary;
+                if (res.InnerHits > 0) res.Summary += "；内层载荷复扫命中 " + res.InnerHits + " 条";
                 log?.Invoke("病毒检测完成：判定 " + res.Verdict + "，评分 " + res.Score);
                 return res;
             }

@@ -316,8 +316,9 @@ namespace ReaStudio.Services
                             var dp = Str(paramsEl, "path");
                             var secs = paramsEl.TryGetProperty("seconds", out var se) ? se.GetInt32() : 12;
                             if (DynamicAnalyzer.IsRunning) { Fail(id, "已有动态分析在执行，请先停止"); break; }
+                            Event("dynamic.isolation", new { level = DynIsolation.CurrentLevel() == DynIsolation.LevelRestricted ? "L2 受限级" : "L1 受控级" });
                             var res = await Task.Run(() => DynamicAnalyzer.Run(dp, secs, t => Event("dynamic.log", t))).ConfigureAwait(true);
-                            if (res.Ok) Event("dynamic.done", new { ok = true, connections = res.Connections.Count, files = res.Files.Count, dangerous = res.DangerousCount });
+                            if (res.Ok) Event("dynamic.done", new { ok = true, isolation = res.IsolationLevel, work = res.WorkDirectory, connections = res.Connections.Count, files = res.Files.Count, registry = res.Registry.Count, chain = res.Chain.Count, dangerous = res.DangerousCount });
                             Reply(id, Camel(res));
                             break;
                         }
@@ -327,6 +328,9 @@ namespace ReaStudio.Services
                         break;
                     case "dynamic.status":
                         Reply(id, new { running = DynamicAnalyzer.IsRunning });
+                        break;
+                    case "dynamic.capability":
+                        Reply(id, Camel(DynIsolation.Capability()));
                         break;
                     case "web.recon":
                         {
@@ -637,7 +641,7 @@ namespace ReaStudio.Services
         private object AppStatus() => new
         {
             app = "REA Studio",
-            version = typeof(Bridge).Assembly.GetName().Version?.ToString(3) ?? "1.0.1",
+            version = typeof(Bridge).Assembly.GetName().Version?.ToString(3) ?? "1.1.0",
             payloadReady = Storage.PayloadReady,
             payloadKind = Storage.PayloadKind,
             runtimeRoot = Storage.RuntimeRoot,

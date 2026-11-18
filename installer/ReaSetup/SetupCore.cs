@@ -14,7 +14,8 @@ namespace ReaSetup
         public const string AppNameNoModel = "REA Studio(no model)";
         public const string AppExeFull = "REAStudio.exe";
         public const string AppExeNoModel = "REA Studio(no model).exe";
-        public const string AppVersion = "1.0.1";
+        /// <summary>版本号：直接取程序集版本（由 ReaSetup.csproj 的 &lt;Version&gt; 决定），避免界面/卸载项与实际产物不同步。</summary>
+        public static readonly string AppVersion = (typeof(SetupCore).Assembly.GetName().Version ?? new Version(1, 1, 0)).ToString(3);
         public const string Publisher = "环宇科创 · 科创云玄武安全实验室";
         public const string UninstallKeyFull = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\REAStudio";
         public const string UninstallKeyNoModel = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\REAStudio-NoModel";

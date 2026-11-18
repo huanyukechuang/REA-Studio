@@ -257,6 +257,20 @@ namespace ReaStudio.Services
                 sb.AppendLine();
                 sb.AppendLine("**判定说明**：" + v.Summary);
             }
+            if (v.Packed || v.Obfuscated || !string.IsNullOrEmpty(v.Installer) || v.InnerPayloads.Count > 0)
+            {
+                sb.AppendLine("**加壳 / 混淆识别**");
+                sb.AppendLine();
+                if (!string.IsNullOrEmpty(v.Packer)) sb.AppendLine("- 封装类型：" + v.Packer + (string.IsNullOrEmpty(v.PackerConfidence) ? "" : "（置信度 " + v.PackerConfidence + "）"));
+                if (v.Obfuscated) sb.AppendLine("- 混淆特征：" + (string.IsNullOrEmpty(v.ObfuscationKind) ? "存在" : v.ObfuscationKind));
+                if (!string.IsNullOrEmpty(v.Installer)) sb.AppendLine("- 安装器 / 自解压：是");
+                sb.AppendLine("- 节区最高熵：" + v.PackMaxEntropy.ToString("F2") + (v.Overlay > 0 ? "　附加数据（overlay）：" + v.Overlay.ToString("N0") + " 字节" : ""));
+                if (!string.IsNullOrEmpty(v.WeakSign)) sb.AppendLine("- 弱指纹：" + v.WeakSign);
+                if (v.PackEvidence.Count > 0) sb.AppendLine("- 判定依据：" + string.Join("；", v.PackEvidence.Take(8)));
+                sb.AppendLine("- 内层载荷：" + (v.InnerPayloads.Count == 0 ? "未解出（可能为强加密壳，建议结合动态分析）" : string.Join("；", v.InnerPayloads.Take(8))));
+                if (v.InnerHits > 0) sb.AppendLine("- 内层复扫：命中 " + v.InnerHits + " 条特征，已计入评分（加壳补偿 +" + v.ScoreBonus + "）");
+                sb.AppendLine();
+            }
             sb.AppendLine();
             sb.AppendLine("| 等级 | 检测名称 | 家族 / 类型 | 来源 | 命中位置 | 说明 |");
             sb.AppendLine("| --- | --- | --- | --- | --- | --- |");
@@ -290,6 +304,19 @@ namespace ReaStudio.Services
             if (!string.IsNullOrEmpty(v.ScanPath)) sb.Append("<li>沙箱副本：<code>").Append(Esc(v.ScanPath)).Append("</code></li>");
             sb.Append("</ul>");
             if (!string.IsNullOrEmpty(v.Summary)) sb.Append("<p><b>判定说明：</b>").Append(Esc(v.Summary)).Append("</p>");
+            if (v.Packed || v.Obfuscated || !string.IsNullOrEmpty(v.Installer) || v.InnerPayloads.Count > 0)
+            {
+                sb.Append("<h4>加壳 / 混淆识别</h4><ul>");
+                if (!string.IsNullOrEmpty(v.Packer)) sb.Append("<li>封装类型：").Append(Esc(v.Packer)).Append(string.IsNullOrEmpty(v.PackerConfidence) ? "" : "（置信度 " + Esc(v.PackerConfidence) + "）").Append("</li>");
+                if (v.Obfuscated) sb.Append("<li>混淆特征：").Append(Esc(string.IsNullOrEmpty(v.ObfuscationKind) ? "存在" : v.ObfuscationKind)).Append("</li>");
+                if (!string.IsNullOrEmpty(v.Installer)) sb.Append("<li>安装器 / 自解压：是</li>");
+                sb.Append("<li>节区最高熵：").Append(v.PackMaxEntropy.ToString("F2")).Append(v.Overlay > 0 ? "　附加数据（overlay）：" + v.Overlay.ToString("N0") + " 字节" : "").Append("</li>");
+                if (!string.IsNullOrEmpty(v.WeakSign)) sb.Append("<li>弱指纹：").Append(Esc(v.WeakSign)).Append("</li>");
+                if (v.PackEvidence.Count > 0) sb.Append("<li>判定依据：").Append(Esc(string.Join("；", v.PackEvidence.Take(8)))).Append("</li>");
+                sb.Append("<li>内层载荷：").Append(Esc(v.InnerPayloads.Count == 0 ? "未解出（可能为强加密壳，建议结合动态分析）" : string.Join("；", v.InnerPayloads.Take(8)))).Append("</li>");
+                if (v.InnerHits > 0) sb.Append("<li>内层复扫：命中 ").Append(v.InnerHits).Append(" 条特征，已计入评分（加壳补偿 +").Append(v.ScoreBonus).Append("）</li>");
+                sb.Append("</ul>");
+            }
             sb.Append("<table><thead><tr><th>等级</th><th>检测名称</th><th>家族 / 类型</th><th>来源</th><th>命中位置</th><th>说明</th></tr></thead><tbody>");
             if (v.Matches.Count == 0)
                 sb.Append("<tr><td>-</td><td>未命中</td><td>-</td><td>病毒库</td><td>-</td><td>与当前病毒库无任何匹配</td></tr>");
@@ -327,6 +354,15 @@ namespace ReaStudio.Services
                 sb.AppendLine("**判定说明**：" + v.Summary);
             }
             sb.AppendLine();
+            if (!string.IsNullOrEmpty(v.PackSummary) || (v.InnerPayloads != null && v.InnerPayloads.Count > 0))
+            {
+                sb.AppendLine("**封装与内层复扫**");
+                sb.AppendLine();
+                if (!string.IsNullOrEmpty(v.PackSummary)) sb.AppendLine("- 封装识别：" + v.PackSummary);
+                sb.AppendLine("- 内层载荷：" + (v.InnerPayloads == null || v.InnerPayloads.Count == 0 ? "未解出（可能为强加密壳，建议结合动态分析）" : string.Join("；", v.InnerPayloads.Take(8))));
+                if (v.InnerHits > 0) sb.AppendLine("- 内层复扫：命中 " + v.InnerHits + " 条 CVE 关联，已并入命中明细与评分");
+                sb.AppendLine();
+            }
             sb.AppendLine("### 组件指纹");
             sb.AppendLine();
             sb.AppendLine("| 组件 | 版本 | 来源 | 证据 |");
@@ -388,6 +424,15 @@ namespace ReaStudio.Services
             if (!string.IsNullOrEmpty(v.ScanPath)) sb.Append("<li>沙箱副本：<code>").Append(Esc(v.ScanPath)).Append("</code></li>");
             sb.Append("</ul>");
             if (!string.IsNullOrEmpty(v.Summary)) sb.Append("<p><b>判定说明：</b>").Append(Esc(v.Summary)).Append("</p>");
+
+            if (!string.IsNullOrEmpty(v.PackSummary) || (v.InnerPayloads != null && v.InnerPayloads.Count > 0))
+            {
+                sb.Append("<h4>封装与内层复扫</h4><ul>");
+                if (!string.IsNullOrEmpty(v.PackSummary)) sb.Append("<li>封装识别：").Append(Esc(v.PackSummary)).Append("</li>");
+                sb.Append("<li>内层载荷：").Append(Esc(v.InnerPayloads == null || v.InnerPayloads.Count == 0 ? "未解出（可能为强加密壳，建议结合动态分析）" : string.Join("；", v.InnerPayloads.Take(8)))).Append("</li>");
+                if (v.InnerHits > 0) sb.Append("<li>内层复扫：命中 ").Append(v.InnerHits).Append(" 条 CVE 关联，已并入命中明细与评分</li>");
+                sb.Append("</ul>");
+            }
 
             sb.Append("<h4>组件指纹</h4>");
             sb.Append("<table><thead><tr><th>组件</th><th>版本</th><th>来源</th><th>证据</th></tr></thead><tbody>");
@@ -739,7 +784,13 @@ namespace ReaStudio.Services
             sb.AppendLine("- 观测时长：" + (d.Unlimited ? "无限制（手动停止或样本退出）" : d.DurationSec + " 秒") + "（结束后强制终止样本及其子进程）");
             sb.AppendLine("- 启动时间：" + d.StartedAt);
             sb.AppendLine("- 判定结论：" + d.Verdict);
-            sb.AppendLine("- 进程 / 外联 / 新增文件：" + d.Processes.Count + " / " + d.Connections.Count + " / " + d.Files.Count);
+            sb.AppendLine("- 执行隔离：" + (string.IsNullOrEmpty(d.IsolationLevel) ? "未记录" : d.IsolationLevel)
+                + (string.IsNullOrEmpty(d.Containment) ? "" : "（" + d.Containment + "）"));
+            if (!string.IsNullOrEmpty(d.WorkDirectory)) sb.AppendLine("- 沙箱执行区：`" + d.WorkDirectory + "`");
+            sb.AppendLine("- 网络隔离：" + (d.NetBlocked ? "已阻断（防火墙出站规则按可执行文件路径生效，会话结束自动清理）" : "未阻断（仅观测" + (string.IsNullOrEmpty(d.NetBlockNote) ? "" : "：" + d.NetBlockNote) + "）"));
+            if (!string.IsNullOrEmpty(d.Desktop)) sb.AppendLine("- 私有桌面：" + d.Desktop);
+            if (!string.IsNullOrEmpty(d.SandboxSession)) sb.AppendLine("- 沙箱会话：" + d.SandboxSession);
+            sb.AppendLine("- 进程 / 子进程外联 / 新增文件 / 注册表变更：" + d.Processes.Count + " / " + d.Connections.Count + " / " + d.Files.Count + " / " + d.Registry.Count);
             sb.AppendLine("- 高危行为：" + d.DangerousCount + " 项");
             sb.AppendLine();
 
@@ -761,10 +812,10 @@ namespace ReaStudio.Services
             if (d.Processes.Count == 0) sb.AppendLine("未捕获到子进程（系统权限不足或样本存活时间过短）。");
             else
             {
-                sb.AppendLine("| PID | 进程 | 首见 | 文件路径 |");
-                sb.AppendLine("| --- | --- | --- | --- |");
+                sb.AppendLine("| PID | 父PID | 进程 | 首见 | 文件路径 |");
+                sb.AppendLine("| --- | --- | --- | --- | --- |");
                 foreach (var p in d.Processes.Take(60))
-                    sb.AppendLine("| " + p.Pid + " | " + MdCell(p.Name) + " | " + p.FirstSeen + " | " + MdCell(Clip(p.FilePath, 72)) + " |");
+                    sb.AppendLine("| " + p.Pid + " | " + (p.ParentPid > 0 ? p.ParentPid.ToString() : "-") + " | " + MdCell(p.Name) + " | " + p.FirstSeen + " | " + MdCell(Clip(p.FilePath, 72)) + " |");
             }
             sb.AppendLine();
 
@@ -773,11 +824,24 @@ namespace ReaStudio.Services
             if (d.Files.Count == 0) sb.AppendLine("未在监控目录发现新增文件。");
             else
             {
-                sb.AppendLine("| 时刻 | 类型 | 路径 |");
-                sb.AppendLine("| --- | --- | --- |");
+                sb.AppendLine("| 时刻 | 变更 | 类型 | 路径 |");
+                sb.AppendLine("| --- | --- | --- | --- |");
                 foreach (var f in d.Files.Take(80))
-                    sb.AppendLine("| " + f.Time + " | " + MdCell(f.Kind) + " | " + MdCell(Clip(f.Path, 88)) + " |");
+                    sb.AppendLine("| " + f.Time + " | " + (string.IsNullOrEmpty(f.Change) ? "新增" : MdCell(f.Change)) + " | " + MdCell(Clip(f.Kind, 20)) + " | " + MdCell(Clip(f.Path, 88)) + " |");
                 if (d.Files.Count > 80) sb.AppendLine("> 另有 " + (d.Files.Count - 80) + " 个新增文件未列出。");
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("## " + Cn(++sec) + "、注册表持久化");
+            sb.AppendLine();
+            if (d.Registry.Count == 0) sb.AppendLine("运行窗口内未发现自启动、服务、映像劫持等持久化位置的变更。");
+            else
+            {
+                sb.AppendLine("| 时刻 | 变更 | 位置 | 值名 | 数据 |");
+                sb.AppendLine("| --- | --- | --- | --- | --- |");
+                foreach (var g in d.Registry.Take(60))
+                    sb.AppendLine("| " + g.Time + " | " + MdCell(g.Change) + " | `" + MdCell(Clip(g.Hive + "\\" + g.Key, 60)) + "` | " + MdCell(Clip(g.Name, 26)) + " | " + (g.Dangerous ? "**" + MdCell(Clip(g.Data, 46)) + "**" : MdCell(Clip(g.Data, 46))) + " |");
+                if (d.Registry.Count > 60) sb.AppendLine("> 另有 " + (d.Registry.Count - 60) + " 条注册表变更未列出。");
             }
             sb.AppendLine();
 
@@ -789,6 +853,31 @@ namespace ReaStudio.Services
                 sb.AppendLine("| " + e.Time + " | " + KindCn(e.Kind) + " | " + (e.Dangerous ? "**" + MdCell(e.Title) + "**" : MdCell(e.Title)) + " | " + MdCell(Clip(e.Detail, 76)) + " |");
             if (d.Events.Count > 160) sb.AppendLine("> 另有 " + (d.Events.Count - 160) + " 条事件未列出。");
             sb.AppendLine();
+
+            sb.AppendLine("## " + Cn(++sec) + "、行为链");
+            sb.AppendLine();
+            if (d.Chain.Count == 0) sb.AppendLine("未生成行为链。");
+            else
+            {
+                sb.AppendLine("| # | 时刻 | 阶段 | 行为 | ATT&CK | 详情 |");
+                sb.AppendLine("| --- | --- | --- | --- | --- | --- |");
+                int i = 0;
+                foreach (var c in d.Chain.Take(120))
+                    sb.AppendLine("| " + (++i) + " | " + c.Time + " | " + MdCell(c.Stage) + " | " + (c.Danger >= 60 ? "**" + MdCell(Clip(c.Subject, 40)) + "**" : MdCell(Clip(c.Subject, 40))) + " | " + MdCell(c.Attck) + " | " + MdCell(Clip(c.Detail, 60)) + " |");
+                if (d.Chain.Count > 120) sb.AppendLine("> 另有 " + (d.Chain.Count - 120)  + " 个环节未列出。");
+            }
+            sb.AppendLine();
+
+            if (d.Rollback.Count > 0)
+            {
+                sb.AppendLine("## " + Cn(++sec) + "、宿主侧回滚清单");
+                sb.AppendLine();
+                sb.AppendLine("以下文件落在沙箱执行区之外，需人工确认后清理：");
+                sb.AppendLine();
+                foreach (var f in d.Rollback.Take(100)) sb.AppendLine("- `" + f + "`");
+                if (d.Rollback.Count > 100) sb.AppendLine("- 另有 " + (d.Rollback.Count - 100) + " 个文件未列出。");
+                sb.AppendLine();
+            }
 
             if (d.Notes.Count > 0)
             {
@@ -805,7 +894,11 @@ namespace ReaStudio.Services
             sb.Append("<div><span class=\"k\">观测时长</span>" + (d.Unlimited ? "无限制（手动停止或样本退出）" : d.DurationSec + " 秒") + "（结束后强制终止样本及其子进程）</div>");
             sb.Append("<div><span class=\"k\">启动时间</span>" + Esc(d.StartedAt) + "</div>");
             sb.Append("<div><span class=\"k\">判定结论</span>" + Esc(d.Verdict) + "</div>");
-            sb.Append("<div><span class=\"k\">数据规模</span>进程 " + d.Processes.Count + " 个· 外联 " + d.Connections.Count + " 条· 新增文件 " + d.Files.Count + " 个· 高危 " + d.DangerousCount + " 项</div>");
+            sb.Append("<div><span class=\"k\">执行隔离</span>" + Esc(string.IsNullOrEmpty(d.IsolationLevel) ? "未记录" : d.IsolationLevel) + (string.IsNullOrEmpty(d.Containment) ? "" : "（" + Esc(d.Containment) + "）") + "</div>");
+            if (!string.IsNullOrEmpty(d.WorkDirectory)) sb.Append("<div><span class=\"k\">沙箱执行区</span>" + Esc(d.WorkDirectory) + "</div>");
+            sb.Append("<div><span class=\"k\">网络隔离</span>" + (d.NetBlocked ? "已阻断（防火墙出站规则按可执行文件路径生效，会话结束自动清理）" : "未阻断（仅观测" + (string.IsNullOrEmpty(d.NetBlockNote) ? "" : "：" + Esc(d.NetBlockNote)) + "）") + "</div>");
+            if (!string.IsNullOrEmpty(d.Desktop)) sb.Append("<div><span class=\"k\">私有桌面</span>" + Esc(d.Desktop) + "</div>");
+            sb.Append("<div><span class=\"k\">数据规模</span>进程 " + d.Processes.Count + " 个· 外联 " + d.Connections.Count + " 条· 新增文件 " + d.Files.Count + " 个· 注册表变更 " + d.Registry.Count + " 项· 高危 " + d.DangerousCount + " 项</div>");
             sb.Append("</div>");
 
             sb.Append("<h2>" + Cn(++sec) + "、网络外联</h2>");
@@ -824,10 +917,10 @@ namespace ReaStudio.Services
             if (d.Processes.Count == 0) sb.Append("<p class=\"note\">未捕获到子进程（系统权限不足或样本存活时间过短）。</p>");
             else
             {
-                sb.Append("<table><colgroup><col style=\"width:10%\"><col style=\"width:24%\"><col style=\"width:14%\"><col style=\"width:52%\"></colgroup>");
-                sb.Append("<tr><th>PID</th><th>进程</th><th>首见</th><th>文件路径</th></tr>");
+                sb.Append("<table><colgroup><col style=\"width:8%\"><col style=\"width:8%\"><col style=\"width:22%\"><col style=\"width:12%\"><col style=\"width:50%\"></colgroup>");
+                sb.Append("<tr><th>PID</th><th>父PID</th><th>进程</th><th>首见</th><th>文件路径</th></tr>");
                 foreach (var p in d.Processes.Take(60))
-                    sb.Append("<tr><td>" + p.Pid + "</td><td>" + Esc(p.Name) + "</td><td>" + p.FirstSeen + "</td><td>" + Esc(Clip(p.FilePath, 72)) + "</td></tr>");
+                    sb.Append("<tr><td>" + p.Pid + "</td><td>" + (p.ParentPid > 0 ? p.ParentPid.ToString() : "-") + "</td><td>" + Esc(p.Name) + "</td><td>" + p.FirstSeen + "</td><td>" + Esc(Clip(p.FilePath, 72)) + "</td></tr>");
                 sb.Append("</table>");
             }
 
@@ -835,12 +928,24 @@ namespace ReaStudio.Services
             if (d.Files.Count == 0) sb.Append("<p class=\"note\">未在监控目录发现新增文件。</p>");
             else
             {
-                sb.Append("<table><colgroup><col style=\"width:16%\"><col style=\"width:26%\"><col style=\"width:58%\"></colgroup>");
-                sb.Append("<tr><th>时刻</th><th>类型</th><th>路径</th></tr>");
+                sb.Append("<table><colgroup><col style=\"width:14%\"><col style=\"width:10%\"><col style=\"width:22%\"><col style=\"width:54%\"></colgroup>");
+                sb.Append("<tr><th>时刻</th><th>变更</th><th>类型</th><th>路径</th></tr>");
                 foreach (var f in d.Files.Take(80))
-                    sb.Append("<tr><td>" + f.Time + "</td><td>" + Esc(f.Kind) + "</td><td>" + Esc(Clip(f.Path, 88)) + "</td></tr>");
+                    sb.Append("<tr><td>" + f.Time + "</td><td>" + Esc(string.IsNullOrEmpty(f.Change) ? "新增" : f.Change) + "</td><td>" + Esc(Clip(f.Kind, 20)) + "</td><td>" + Esc(Clip(f.Path, 88)) + "</td></tr>");
                 sb.Append("</table>");
                 if (d.Files.Count > 80) sb.Append("<p class=\"note\">另有 " + (d.Files.Count - 80) + " 个新增文件未列出。</p>");
+            }
+
+            sb.Append("<h2>" + Cn(++sec) + "、注册表持久化</h2>");
+            if (d.Registry.Count == 0) sb.Append("<p class=\"note\">运行窗口内未发现自启动、服务、映像劫持等持久化位置的变更。</p>");
+            else
+            {
+                sb.Append("<table><colgroup><col style=\"width:12%\"><col style=\"width:8%\"><col style=\"width:40%\"><col style=\"width:16%\"><col style=\"width:24%\"></colgroup>");
+                sb.Append("<tr><th>时刻</th><th>变更</th><th>位置</th><th>值名</th><th>数据</th></tr>");
+                foreach (var g in d.Registry.Take(60))
+                    sb.Append("<tr><td>" + g.Time + "</td><td>" + Esc(g.Change) + "</td><td><code>" + Esc(Clip(g.Hive + "\\" + g.Key, 60)) + "</code></td><td>" + Esc(Clip(g.Name, 26)) + "</td><td>" + (g.Dangerous ? "<b>" + Esc(Clip(g.Data, 46)) + "</b>" : Esc(Clip(g.Data, 46))) + "</td></tr>");
+                sb.Append("</table>");
+                if (d.Registry.Count > 60) sb.Append("<p class=\"note\">另有 " + (d.Registry.Count - 60) + " 条注册表变更未列出。</p>");
             }
 
             sb.Append("<h2>" + Cn(++sec) + "、行为时间线</h2>");
@@ -850,6 +955,26 @@ namespace ReaStudio.Services
                 sb.Append("<tr><td>" + e.Time + "</td><td>" + KindCn(e.Kind) + "</td><td>" + (e.Dangerous ? "<b>" + Esc(e.Title) + "</b>" : Esc(e.Title)) + "</td><td>" + Esc(Clip(e.Detail, 76)) + "</td></tr>");
             sb.Append("</table>");
             if (d.Events.Count > 160) sb.Append("<p class=\"note\">另有 " + (d.Events.Count - 160) + " 条事件未列出。</p>");
+
+            sb.Append("<h2>" + Cn(++sec) + "、行为链</h2>");
+            if (d.Chain.Count == 0) sb.Append("<p class=\"note\">未生成行为链。</p>");
+            else
+            {
+                sb.Append("<table><colgroup><col style=\"width:6%\"><col style=\"width:12%\"><col style=\"width:12%\"><col style=\"width:30%\"><col style=\"width:20%\"><col style=\"width:20%\"></colgroup>");
+                sb.Append("<tr><th>#</th><th>时刻</th><th>阶段</th><th>行为</th><th>ATT&amp;CK</th><th>详情</th></tr>");
+                int ci = 0;
+                foreach (var c in d.Chain.Take(120))
+                    sb.Append("<tr><td>" + (++ci) + "</td><td>" + c.Time + "</td><td>" + Esc(c.Stage) + "</td><td>" + (c.Danger >= 60 ? "<b>" + Esc(Clip(c.Subject, 40)) + "</b>" : Esc(Clip(c.Subject, 40))) + "</td><td>" + Esc(c.Attck) + "</td><td>" + Esc(Clip(c.Detail, 60)) + "</td></tr>");
+                sb.Append("</table>");
+                if (d.Chain.Count > 120) sb.Append("<p class=\"note\">另有 " + (d.Chain.Count - 120) + " 个环节未列出。</p>");
+            }
+
+            if (d.Rollback.Count > 0)
+            {
+                sb.Append("<h2>" + Cn(++sec) + "、宿主侧回滚清单</h2><p class=\"note\">以下文件落在沙箱执行区之外，需人工确认后清理：</p><ul>");
+                foreach (var f in d.Rollback.Take(100)) sb.Append("<li><code>" + Esc(f) + "</code></li>");
+                sb.Append("</ul>");
+            }
 
             if (d.Notes.Count > 0)
             {

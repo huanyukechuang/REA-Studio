@@ -510,6 +510,7 @@ function buildNode(value, depth, key) {
 
 /* ---------- 事件 ---------- */
 function onEvent(name, data) {
+  if (SB_REFRESH_EVENTS.has(name)) queueSandboxRefresh();
   if (name === 'ai.delta') {
     const s = state.chatStream;
     if (!s) return;
@@ -1785,6 +1786,16 @@ const CAPS = [
 ];
 
 /* ---------- sandbox ---------- */
+var SB_REFRESH_EVENTS = new Set(['analysis.begin', 'analysis.done', 'virus.begin', 'vuln.begin', 'dynamic.isolation', 'dynamic.done', 'sandbox.begin']);
+var _sbTimer = 0;
+function queueSandboxRefresh() {
+  if (_sbTimer) return;
+  _sbTimer = setTimeout(async () => {
+    _sbTimer = 0;
+    try { const r = await invoke('sandbox.status'); if (r) renderSandbox(r); } catch (e) { }
+  }, 500);
+}
+
 function fmtBytes(n) {
   if (!n || n < 0) return '0 B';
   const u = ['B', 'KB', 'MB', 'GB'];
