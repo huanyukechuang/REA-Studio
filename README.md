@@ -1,18 +1,7 @@
----
-AIGC:
-    Label: "1"
-    ContentProducer: 001191440300708461136T1XGW3
-    ProduceID: 3f2489cb511bbc4caaa7e0053f2a2d34_4b0e3cf3e2cb11f189bc525400248c00
-    ReservedCode1: 8/zXO8luERrCWLXIuTu1bNILGhwriWTFeIb5eOxCO1Vr565ksDw3cIFGdtnE1kMJLF3DjC2A/Yq3QOOKtkrKYG493z1UBHcSSa+3Ti7q/LAjWrk8uF5Ucka0rwPldTMZjY5G8A/LMZmSYlozwUV4c/OU8HDr44dnD2dFTE5AtNoH/8Kxf7wLXZCWAP4=
-    ContentPropagator: 001191440300708461136T1XGW3
-    PropagateID: 3f2489cb511bbc4caaa7e0053f2a2d34_4b0e3cf3e2cb11f189bc525400248c00
-    ReservedCode2: 8/zXO8luERrCWLXIuTu1bNILGhwriWTFeIb5eOxCO1Vr565ksDw3cIFGdtnE1kMJLF3DjC2A/Yq3QOOKtkrKYG493z1UBHcSSa+3Ti7q/LAjWrk8uF5Ucka0rwPldTMZjY5G8A/LMZmSYlozwUV4c/OU8HDr44dnD2dFTE5AtNoH/8Kxf7wLXZCWAP4=
----
-
 # REA Studio
 
-> 本地逆向分析与恶意样本研判工作台 — 离线优先，样本不出机
->
+> 本地逆向分析与恶意样本研判工作台 — 离线优先，样本不出机<p>
+> 本项目已加入 <b>科创+开源计划</b><p>
 > ©科创云玄武安全实验室
 
 ![platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%207--11-0078d4)
