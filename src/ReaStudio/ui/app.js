@@ -810,15 +810,71 @@ function autoScrollChat() {
   if (chat.scrollHeight - chat.scrollTop - chat.clientHeight < 120) chat.scrollTop = chat.scrollHeight;
 }
 
+// 漏洞/病毒检测的结果走 virus.result / vuln.result 单独下发，既不在 state.results 也不进 state.evidence，
+// 因此必须在这里单独压成提示词段落；否则模型看不到任何命中，只能凭静态指标反推出「未检测到任何已知安全漏洞」。
+function vulnContext() {
+  const v = state.vuln;
+  if (!v) return '';
+  if (!v.ok) return '\n[漏洞检测] 检测未完成或失败：' + (v.error || v.verdict || '未知错误');
+  const out = [];
+  out.push('\n[漏洞检测] 结论=' + (v.verdict || '—') + ' 评分=' + (v.score || 0)
+    + ' 严重=' + (v.critical || 0) + ' 高危=' + (v.high || 0) + ' 中危=' + (v.medium || 0)
+    + ' 低危=' + (v.low || 0) + ' 待确认=' + (v.pending || 0)
+    + ' CVE库=' + (v.dbVersion || '—') + '(' + (v.cveCount || 0) + '条)');
+  if (v.sha256) out.push('  样本SHA-256: ' + v.sha256);
+  if (v.summary) out.push('  判定说明: ' + v.summary);
+  const comps = Array.isArray(v.components) ? v.components : [];
+  if (comps.length) out.push('  组件指纹: ' + comps.slice(0, 10).map(c => (c.name || '') + ' ' + (c.version || '?')).join('、'));
+  const hits = Array.isArray(v.matches) ? v.matches : [];
+  if (hits.length) {
+    out.push('  命中漏洞合计 ' + hits.length + ' 条，明细前 ' + Math.min(hits.length, 12) + ' 条：');
+    hits.slice(0, 12).forEach(m => out.push('  - ' + (m.cveId || '') + ' [' + (m.severity || '') + '] CVSS=' + (m.cvss || 0)
+      + ' 命中形态=' + (m.kind || '') + ' 组件=' + (m.component || '') + (m.version ? ' ' + m.version : '')
+      + (m.desc ? ' 说明=' + m.desc : '') + (m.fix ? ' 修复=' + m.fix : '')));
+  } else {
+    out.push('  命中漏洞 0 条（已识别组件 ' + comps.length + ' 个，库内 CVE ' + (v.cveCount || 0) + ' 条全部比对）');
+  }
+  return out.join('\n');
+}
+
+function virusContext() {
+  const v = state.virus;
+  if (!v) return '';
+  if (!v.ok) return '\n[病毒检测] 检测未完成或失败：' + (v.error || v.verdict || '未知错误');
+  const out = [];
+  out.push('\n[病毒检测] 结论=' + (v.verdict || '—') + ' 评分=' + (v.score || 0)
+    + ' 高危=' + (v.high || 0) + ' 中危=' + (v.medium || 0) + ' 低危=' + (v.low || 0)
+    + ' 熵值=' + (v.entropy || 0) + ' 病毒库=' + (v.dbVersion || '—')
+    + '(规则' + (v.ruleCount || 0) + '条/样本哈希' + (v.hashCount || 0) + '条)');
+  if (v.sha256) out.push('  样本SHA-256: ' + v.sha256);
+  if (v.md5) out.push('  样本MD5: ' + v.md5);
+  if (v.peInfo) out.push('  结构特征: ' + v.peInfo);
+  if (v.summary) out.push('  判定说明: ' + v.summary);
+  const hits = Array.isArray(v.matches) ? v.matches : [];
+  if (hits.length) {
+    out.push('  命中规则/特征合计 ' + hits.length + ' 条，明细前 ' + Math.min(hits.length, 12) + ' 条：');
+    hits.slice(0, 12).forEach(m => out.push('  - [' + (m.severity || '') + '] ' + (m.name || '')
+      + ' 家族/类型=' + ((m.family || '') + (m.type ? '/' + m.type : ''))
+      + ' 来源=' + ((m.source || '') + (m.ruleId ? ' ' + m.ruleId : ''))
+      + ' 命中位置=' + (m.match || '') + (m.desc ? ' 说明=' + m.desc : '')));
+  } else {
+    out.push('  命中规则/特征 0 条（内置规则 ' + (v.ruleCount || 0) + ' 条已全部比对）');
+  }
+  return out.join('\n');
+}
+
 function buildContext() {
   const parts = [];
   if (state.target) parts.push('目标文件: ' + state.target.name + ' (' + state.target.path + ', ' + humanSize(state.target.size) + ')');
+  // 检测命中是最硬的结论性证据，先占位，避免被静态模块的预算挤掉
+  const det = [vulnContext(), virusContext()].filter(Boolean);
+  if (det.length) parts.push(det.join('\n'));
   const ok = Object.values(state.results).filter(r => r.state === 'ok');
   if (ok.length) {
-    let budget = 7000;
+    let budget = det.length ? 4500 : 7000;
     ok.forEach(r => {
       const txt = compactEvidence(r.json || '', 900);
-      if (!txt || budget <= 200) return;
+      if (!txt || budget <= 0) return;
       const use = txt.slice(0, budget);
       budget -= use.length;
       const sec = r.elapsed ? ' ' + Math.max(1, Math.round(r.elapsed / 1000)) + 's' : '';
@@ -1406,7 +1462,8 @@ async function exportReport(fmt, scope) {
 
 async function aiExplain() {
   const hasSite = !!((state.siteStatic && state.siteStatic.ok) || (state.siteDynamic && state.siteDynamic.ok));
-  if (!state.evidence.length && !hasSite) { toast('还没有分析证据，请先完成一次分析'); return; }
+  // 漏洞/病毒检测结果不在 evidence 里，单跑检测时也应允许解读
+  if (!state.evidence.length && !hasSite && !state.vuln && !state.virus) { toast('还没有分析证据，请先完成一次分析'); return; }
   const ai = (state.status && state.status.ai) || {};
   if (!ai.localRunning && ai.mode !== 'cloud') {
     toast('正在启动本地模型…', 3000);
@@ -1425,11 +1482,12 @@ async function aiExplain() {
       + '- 输出控制在 400 字内，不要重复原始指标';
   } else {
     box.value = '请基于当前分析指标用中文给出：\n1) 3-6 条关键技术结论（架构/依赖/加固/可疑点）\n'
-    + '2) 风险与暴露面评估\n3) 建议的下一步验证动作\n\n【硬性约束】\n'
+    + '2) 风险与暴露面评估（必须包含漏洞检测与病毒检测的结论、命中数量与具体 CVE 编号或规则名称）\n3) 建议的下一步验证动作\n\n【硬性约束】\n'
     + '- 只使用给出的字段值，禁止补充指标里没有的事实，不要猜测文件用途或恶意性\n'
+    + '- 证据里「漏洞检测」「病毒检测」段落给出命中数量与明细时，必须逐条引用，严禁输出“未检测到任何已知安全漏洞”或“无风险”这类与证据相反的结论\n'
     + '- 字段直译：architecture=amd64 表示 64 位 x86-64；format=pe32+ 表示 64 位 PE；不要自行推算位数\n'
     + '- 每条结论后用括号标注依据字段名；无字段支撑就写“证据不足”\n'
-    + '- 输出控制在 400 字内，不要重复原指标';;
+    + '- 输出控制在 400 字内，不要重复原指标';
   }
   await sendChat();
 }
@@ -1480,6 +1538,10 @@ async function sendChat() {
   state.chatStream = sess;
   const sys = '你是运行在本地桌面上的逆向分析助手，服务于安全研究人员。基于用户提供的 REA 静态分析证据作答，'
     + '只依据证据推理，不确定时明确说明；输出简洁、分点、面向可执行结论，禁止编造证据中不存在的字段。'
+    + '「漏洞检测」「病毒检测」段落属于既有证据：证据里给出命中数量或明细时，必须逐条引用 CVE 编号、等级或规则名称并据此下结论；'
+    + '严禁在证据显示存在命中时输出“未检测到任何已知安全漏洞”“无风险”这类与证据相反的结论。'
+    + '只有证据明确写出命中为 0 条时，才可以表述为无匹配；证据中完全没有对应段落时，写“本次未提供该项检测结果”。'
+    + '历史对话里此前的作答可能基于旧证据，一律以当前证据为准，不得沿袭其中的无命中或无风险结论。'
     + '禁止输出任何 XML/HTML 标签，禁止使用 <ref>、<citation>、<source> 之类的引用标记；'
     + '需要指明依据时写成「依据：证据标题」这样的纯文本，不要重复同一句话或同一段落。';
 
